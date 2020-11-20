@@ -16,7 +16,7 @@ import freechips.rocketchip.tilelink._
 import dsptools.tester.MemMasterModel
 import chisel3.iotesters.{ChiselFlatSpec, Driver, PeekPokeTester}
 import org.scalatest.{FlatSpec, Matchers}
-import magnitude.Skid
+//import magnitude.Skid
 
 
 
@@ -65,7 +65,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       skidOutLast.ready := ioout.ready
       skidInLast.bits := ShiftRegister(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire(), latency-1, false.B)
       skidInLast.valid := freq.get.in(0)._1.valid
-      Skid(latency, skidInLast, skidOutLast) := skidInLast.bits
+      Skid2(latency, skidInLast, skidOutLast) := skidInLast.bits
       ioout.bits.last := skidOutLast.bits && ioout.valid
       
       val queueCounter = RegInit(0.U(2.W))
@@ -174,7 +174,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       skidOutLast.ready := ioout.ready
       skidInLast.bits := ShiftRegister(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire(), latency-1, false.B)
       skidInLast.valid := freq.get.in(0)._1.valid
-      Skid(latency, skidInLast, skidOutLast) := skidInLast.bits
+      Skid2(latency, skidInLast, skidOutLast) := skidInLast.bits
       ioout.bits.last := skidOutLast.bits && ioout.valid
       
       val queueCounter = RegInit(0.U(2.W))
