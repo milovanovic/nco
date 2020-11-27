@@ -40,14 +40,14 @@ class NCOStreamingPINCandPOFFSpec extends FlatSpec with Matchers {
         } should be (true)
       }
 
-      it should f"""run the tester: NCO with table size of 512, table width of 18 bits,
+      it should f"""run the tester: NCO with table size of 256, table width of 18 bits,
         phase width of 13 bits, working in standard mode with Taylor series of 4,
         without phase dithering, syncROM = $syncROM, phase accumulator = $phaseAcc, streaming phase increment and offset""" in {
         //tableSize, tableWidth, phaseWidth, rasterized, taylorTerms, dither, syncROM, phaseAccEnable
-        val fixedParams = FixedNCOParams(512, 18, 13, false, 4, false, syncROM, phaseAcc, RoundHalfUp)
+        val fixedParams = FixedNCOParams(256, 18, 12, false, 4, false, syncROM, phaseAcc, RoundHalfUp)
         chisel3.iotesters.Driver.execute(Array("-tbn", "verilator"), dut(fixedParams)) {
           //nco, tableSize, rasterized, syncROM, phaseAcc, tolLSB
-          c => new NCOStreamingPINCandPOFFTester(c, 512, false, syncROM, phaseAcc, 4)
+          c => new NCOStreamingPINCandPOFFTester(c, 256, false, syncROM, phaseAcc, 4)
         } should be (true)
       }
 

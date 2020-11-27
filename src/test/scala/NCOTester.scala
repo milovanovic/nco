@@ -6,6 +6,7 @@ import chisel3._
 import chisel3.experimental.FixedPoint
 import chisel3.iotesters.PeekPokeTester
 // import dspblocks.PeekPokePackers
+import dsptools._
 import dsptools.DspTester
 import dsptools.numbers.DspReal
 import scala.io.Source
@@ -55,257 +56,258 @@ class NCOStreamingPINCandPOFFTester(c: NCOStreamingPINCandPOFF[FixedPoint], tabl
       maxIdx/(4*tableSize)
     }
   }
-
-  var phaseOffset = 0//1
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.poff.valid, 0)
-  step(2)
-  var idx = if (syncROMEnable) 1 else 0
-
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  poke(dut.io.poff.valid, 1)
-  poke(dut.io.poff.bits, phaseOffset)
   
+  updatableDspVerbose.withValue(false) {
 
-  poke(dut.io.freq.bits, idx)
-  if (syncROMEnable && !phaseAccEnable) idx +=1
-  step(1)
+    var phaseOffset = 0//1
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.poff.valid, 0)
+    step(2)
+    var idx = if (syncROMEnable) 1 else 0
 
-  while (idx < max) {
-    val sinCalc = {
-      if (!syncROMEnable){
-        if (phaseAccEnable){
-          scala.math.sin(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
-        } else {
-          scala.math.sin(0.5 * scala.math.Pi *(idx).toDouble/(phaseFactor*tableSize).toDouble)
-        }
-      } else {
-        if (phaseAccEnable){
-          val x = if(idx == 0) idx else (idx-1)
-          scala.math.sin(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
-        } else {
-          val x = if(idx == 1) (idx-1) else (idx-2)
-          scala.math.sin(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
-        }
-      }
-    }
-    val cosCalc = {
-      if (!syncROMEnable){
-        if (phaseAccEnable){
-          scala.math.cos(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
-        } else {
-          scala.math.cos(0.5 * scala.math.Pi *(idx).toDouble/(phaseFactor*tableSize).toDouble)
-        }
-      } else {
-        if (phaseAccEnable){
-          val x = if(idx == 0) idx else (idx-1)
-          scala.math.cos(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
-        } else {
-          val x = if(idx == 1) (idx-1) else (idx-2)
-          scala.math.cos(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
-        }
-      }
-    }
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    poke(dut.io.poff.valid, 1)
+    poke(dut.io.poff.bits, phaseOffset)
 
-    if (peek(c.io.out.valid)) {
-      fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.imag, sinCalc) }
-      fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.real, cosCalc) }
-      idx += 1
-    }
-    if (phaseAccEnable) {
-      poke(dut.io.freq.bits, factor)
-    } else {
-      if (idx < max) {
-        poke(dut.io.freq.bits, idx)
-      }
-    }
+
+    poke(dut.io.freq.bits, idx)
+    if (syncROMEnable && !phaseAccEnable) idx +=1
     step(1)
+
+    while (idx < max) {
+      val sinCalc = {
+        if (!syncROMEnable){
+          if (phaseAccEnable){
+            scala.math.sin(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
+          } else {
+            scala.math.sin(0.5 * scala.math.Pi *(idx).toDouble/(phaseFactor*tableSize).toDouble)
+          }
+        } else {
+          if (phaseAccEnable){
+            val x = if(idx == 0) idx else (idx-1)
+            scala.math.sin(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
+          } else {
+            val x = if(idx == 1) (idx-1) else (idx-2)
+            scala.math.sin(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
+          }
+        }
+      }
+      val cosCalc = {
+        if (!syncROMEnable){
+          if (phaseAccEnable){
+            scala.math.cos(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
+          } else {
+            scala.math.cos(0.5 * scala.math.Pi *(idx).toDouble/(phaseFactor*tableSize).toDouble)
+          }
+        } else {
+          if (phaseAccEnable){
+            val x = if(idx == 0) idx else (idx-1)
+            scala.math.cos(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
+          } else {
+            val x = if(idx == 1) (idx-1) else (idx-2)
+            scala.math.cos(0.5 * scala.math.Pi *x.toDouble/(phaseFactor*tableSize).toDouble)
+          }
+        }
+      }
+
+      if (peek(c.io.out.valid)) {
+        fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.imag, sinCalc) }
+        fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.real, cosCalc) }
+        idx += 1
+      }
+      if (phaseAccEnable) {
+        poke(dut.io.freq.bits, factor)
+      } else {
+        if (idx < max) {
+          poke(dut.io.freq.bits, idx)
+        }
+      }
+      step(1)
+    }
+
+
+    /*poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.poff.valid, 0)
+    step(5)
+    poke(dut.io.freq.bits, 1)
+    poke(dut.io.freq.valid, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(10)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)*/
+
+    /*step(2)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    step(2)
+    poke(dut.io.freq.valid, 1)
+    step(10)*/
+
+    /*poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(10)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(5)
+    poke(dut.io.out.ready, 1)
+    step(10)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.out.ready, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(6)
+
+    poke(dut.io.out.ready, 0)
+    step(2)
+    poke(dut.io.out.ready, 1)
+    step(2)
+    poke(dut.io.out.ready, 0)
+    step(2)
+    poke(dut.io.out.ready, 1)
+    step(2)
+    poke(dut.io.out.ready, 0)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.out.ready, 1)
+    step(2)
+    poke(dut.io.out.ready, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(2)
+    poke(dut.io.freq.valid, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    poke(dut.io.out.ready, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(2)
+    poke(dut.io.freq.valid, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(1)
+    poke(dut.io.freq.valid, 1)
+    step(5)
+    poke(dut.io.freq.valid, 0)
+    step(2)
+    poke(dut.io.freq.valid, 1)
+    step(2)
+    poke(dut.io.freq.valid, 0)
+    step(2)
+    poke(dut.io.freq.valid, 1)
+    step(6)
+
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(1)
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    step(6)
+    poke(dut.io.freq.valid, 0)
+    step(4)
+    poke(dut.io.freq.valid, 1)
+
+
+
+    step(100)*/
   }
-  
-  
-  /*poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.poff.valid, 0)
-  step(5)
-  poke(dut.io.freq.bits, 1)
-  poke(dut.io.freq.valid, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(10)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)*/
-  
-  /*step(2)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  step(2)
-  poke(dut.io.freq.valid, 1)
-  step(10)*/
-  
-  /*poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(10)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(5)
-  poke(dut.io.out.ready, 1)
-  step(10)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.out.ready, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(6)
-  
-  poke(dut.io.out.ready, 0)
-  step(2)
-  poke(dut.io.out.ready, 1)
-  step(2)
-  poke(dut.io.out.ready, 0)
-  step(2)
-  poke(dut.io.out.ready, 1)
-  step(2)
-  poke(dut.io.out.ready, 0)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.out.ready, 1)
-  step(2)
-  poke(dut.io.out.ready, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(2)
-  poke(dut.io.freq.valid, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  poke(dut.io.out.ready, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(2)
-  poke(dut.io.freq.valid, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(1)
-  poke(dut.io.freq.valid, 1)
-  step(5)
-  poke(dut.io.freq.valid, 0)
-  step(2)
-  poke(dut.io.freq.valid, 1)
-  step(2)
-  poke(dut.io.freq.valid, 0)
-  step(2)
-  poke(dut.io.freq.valid, 1)
-  step(6)
-  
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(1)
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  step(6)
-  poke(dut.io.freq.valid, 0)
-  step(4)
-  poke(dut.io.freq.valid, 1)
-  
-  
-  
-  step(100)*/
-  
-  
   
 }
 
@@ -329,52 +331,55 @@ class NCOStreamingPINCandPOFFTesterDspReal(c: NCOStreamingPINCandPOFF[DspReal], 
     }
   }
 
-  var phaseOffset = 1
-  poke(dut.io.out.ready, 0)
-  poke(dut.io.freq.valid, 0)
-  poke(dut.io.poff.valid, 0)
-  step(2)
+  updatableDspVerbose.withValue(false) {
+  
+    var phaseOffset = 1
+    poke(dut.io.out.ready, 0)
+    poke(dut.io.freq.valid, 0)
+    poke(dut.io.poff.valid, 0)
+    step(2)
 
-  var idx = 0
-  poke(dut.io.freq.bits, idx)
-  if(phaseAccEnable) {
-    poke(dut.io.poff.bits, phaseOffset)
-  }
-  poke(dut.io.out.ready, 1)
-  poke(dut.io.freq.valid, 1)
-  poke(dut.io.poff.valid, 1)
+    var idx = 0
+    poke(dut.io.freq.bits, idx)
+    if(phaseAccEnable) {
+      poke(dut.io.poff.bits, phaseOffset)
+    }
+    poke(dut.io.out.ready, 1)
+    poke(dut.io.freq.valid, 1)
+    poke(dut.io.poff.valid, 1)
 
-  step(1)
-
-  while (idx < max) {
     step(1)
-    val sinCalc = {
-      if(phaseAccEnable) {
-        scala.math.sin(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
-      } else {
-        scala.math.sin(0.5 * scala.math.Pi *idx.toDouble/(phaseFactor*tableSize).toDouble)
-      }
-    }
-    val cosCalc = {
-      if(phaseAccEnable){
-        scala.math.cos(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
-      } else {
-        scala.math.cos(0.5 * scala.math.Pi *idx.toDouble/(phaseFactor*tableSize).toDouble)
-      }
-    }
 
-    if (peek(c.io.out.valid)) {
-      fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.imag, sinCalc) }
-      fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.real, cosCalc) }
-    }
-    idx += 1
-    if (phaseAccEnable) {
-      poke(dut.io.freq.bits, factor)
-    } else {
-      if (idx < max) {
-        poke(dut.io.freq.bits, idx)
+    while (idx < max) {
+      step(1)
+      val sinCalc = {
+        if(phaseAccEnable) {
+          scala.math.sin(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
+        } else {
+          scala.math.sin(0.5 * scala.math.Pi *idx.toDouble/(phaseFactor*tableSize).toDouble)
+        }
+      }
+      val cosCalc = {
+        if(phaseAccEnable){
+          scala.math.cos(0.5 * scala.math.Pi *(idx+phaseOffset).toDouble/(phaseFactor*tableSize).toDouble)
+        } else {
+          scala.math.cos(0.5 * scala.math.Pi *idx.toDouble/(phaseFactor*tableSize).toDouble)
+        }
+      }
+
+      if (peek(c.io.out.valid)) {
+        fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.imag, sinCalc) }
+        fixTolLSBs.withValue(tolLSB) { expect(c.io.out.bits.real, cosCalc) }
+      }
+      idx += 1
+      if (phaseAccEnable) {
+        poke(dut.io.freq.bits, factor)
+      } else {
+        if (idx < max) {
+          poke(dut.io.freq.bits, idx)
+        }
       }
     }
   }
-
+    
 }
