@@ -1,6 +1,8 @@
 Numerically Controlled Oscillator (NCO) Chisel Generator
 ========================================================
 
+[![Build Status](https://travis-ci.org/milovanovic/nco.svg?branch=master)](https://travis-ci.org/milovanovic/nco)
+
 ## Overview
 This repository contains a generator of a parametrizable numerically controlled oscillator with various options, written in [Chisel](http://www.chisel-lang.org) hardware design language. Numerically Controlled 
 Oscillators (NCO), or Direct Digital Synthesizers (DDS), are important components in many digital communication systems. They are used for constructing digital down and up converters, demodulators, and implementing various types of modulation schemes.
