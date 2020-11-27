@@ -26,7 +26,8 @@ case class NCOParams[T <: Data]
   phaseAccEnable: Boolean,
   roundingMode: TrimType = RoundHalfUp,
   pincType: InterfaceType = Streaming,
-  poffType: InterfaceType = Streaming
+  poffType: InterfaceType = Streaming,
+  useMultiplier : Boolean = false
 ) {
   requireIsChiselType(protoFreq)
   requireIsChiselType(protoOut)
@@ -47,7 +48,7 @@ case class NCOParams[T <: Data]
 }
 
 object FixedNCOParams {
-  def apply(tableSize: Int, tableWidth: Int, phaseWidth: Int = 8, rasterizedMode: Boolean = false, nInterpolationTerms: Int = 0, ditherEnable: Boolean = false, syncROMEnable: Boolean = false, phaseAccEnable: Boolean = true, roundingMode: TrimType = RoundHalfUp, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming): NCOParams[FixedPoint] = {
+  def apply(tableSize: Int, tableWidth: Int, phaseWidth: Int = 8, rasterizedMode: Boolean = false, nInterpolationTerms: Int = 0, ditherEnable: Boolean = false, syncROMEnable: Boolean = false, phaseAccEnable: Boolean = true, roundingMode: TrimType = RoundHalfUp, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming, useMultiplier: Boolean = false): NCOParams[FixedPoint] = {
     require(tableWidth >= 3)
     val phaseW = {
       if (rasterizedMode){
@@ -70,13 +71,14 @@ object FixedNCOParams {
       phaseAccEnable = phaseAccEnable,
       roundingMode = roundingMode,
       pincType = pincType,
-      poffType = poffType
+      poffType = poffType,
+      useMultiplier = useMultiplier
     )
   }
 }
 
 object DspRealNCOParams {
-  def apply(tableSize: Int, rasterizedMode: Boolean = false, phaseAccEnable: Boolean = true, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming): NCOParams[DspReal] = {
+  def apply(tableSize: Int, rasterizedMode: Boolean = false, phaseAccEnable: Boolean = true, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming, useMultiplier: Boolean = false): NCOParams[DspReal] = {
     val phaseW = (log2Ceil(tableSize)+2).toInt
     NCOParams(
       phaseWidth = phaseW,
@@ -92,7 +94,8 @@ object DspRealNCOParams {
       phaseAccEnable = phaseAccEnable,
       roundingMode = RoundHalfUp,
       pincType = pincType,
-      poffType = poffType
+      poffType = poffType,
+      useMultiplier = useMultiplier
     )
   }
 }
