@@ -79,8 +79,10 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       skidInLast.valid := freq.get.in(0)._1.valid
       Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
       val lastOut = RegInit(Bool(), false.B)
-      when(skidOutLast.bits) {lastOut := true.B}
-      ioout.bits.last := lastOut && !RegNext(lastOut)
+      val indicator = RegInit(Bool(), false.B)
+      when(skidOutLast.bits) {indicator := true.B}
+      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B}
+      ioout.bits.last := lastOut
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
@@ -203,8 +205,10 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       skidInLast.valid := freq.get.in(0)._1.valid
       Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
       val lastOut = RegInit(Bool(), false.B)
-      when(skidOutLast.bits) {lastOut := true.B}
-      ioout.bits.last := lastOut && !RegNext(lastOut)
+      val indicator = RegInit(Bool(), false.B)
+      when(skidOutLast.bits) {indicator := true.B}
+      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B}
+      ioout.bits.last := lastOut
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
