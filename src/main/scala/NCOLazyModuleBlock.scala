@@ -272,83 +272,146 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
     // poff streaming
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     else if (params.pincType != Streaming && params.poffType == Streaming) {
-      
-      val outputReady =  ioout.ready
         
       val freqInit = if((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) 1 else 0
+      
       // registers
       val inputEnableReg = RegInit(true.B)
       val freqReg = RegInit(freqInit.U((beatBytes*4).W))
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
       
-      val enable = outputReady && inputEnableReg
+      val latency = 2 //if (params.syncROMEnable) 2 else 1
+      
+      //val enable = ioout.ready && inputEnableReg
 
-      ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
-
-      // phase counter
-      if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
-        when(outputReady && inputEnableReg && ioout.ready) {
-          phaseCounter := phaseCounter + freqReg
-        }
-      } 
-      else {
-        phaseCounter := freqReg
-      }
+      //ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
       
       // regmap
       if ((params.pincType == Config) && params.useMultiplier) {
         val fields = Seq(
-          RegField(1, enableMultiplying,
-            RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
-          RegField(params.protoOut.getWidth, multiplyingFactor,
-            RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
-          RegField(beatBytes*4, freqReg,   
-            RegFieldDesc(name = "freq",    desc = "nco frequency control"))
+          RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+          RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+          RegField(beatBytes*4, freqReg, RegFieldDesc(name = "freq",    desc = "nco frequency control"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       } else if ((params.pincType == Fixed) && params.useMultiplier) { 
         val fields = Seq(
-          RegField(1, enableMultiplying,
-            RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
-          RegField(params.protoOut.getWidth, multiplyingFactor,
-            RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
-          RegField(1, inputEnableReg,   
-            RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
+          RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+          RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+          RegField(1, inputEnableReg, RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       } else if (params.pincType == Config) {
         val fields = Seq(
-          RegField(beatBytes*4, freqReg,   
-            RegFieldDesc(name = "freq",    desc = "nco frequency control"))
+          RegField(beatBytes*4, freqReg, RegFieldDesc(name = "freq",    desc = "nco frequency control"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       } else if (params.pincType == Fixed) {
         val fields = Seq(
-          RegField(1, inputEnableReg,   
-            RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
+          RegField(1, inputEnableReg, RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       } else if (params.useMultiplier) {
         val fields = Seq(
-          RegField(1, enableMultiplying,
-            RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
-          RegField(params.protoOut.getWidth, multiplyingFactor,
-            RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor"))
+          RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+          RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
 
+      val queueCounter = RegInit(0.U(2.W))
+      val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
+      queueCounter := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
+      val lastStateQueueCounter = RegInit(0.U(2.W))
+      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
+      val lastStateQueueCounterWire = Wire(UInt(2.W))
+      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
+      
+      // phase counter
+      if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
+        //when(inputEnableReg && ioout.ready) {
+        when(inputEnableReg && inReady) {
+          phaseCounter := phaseCounter + freqReg
+        }
+      } else {
+        when(inputEnableReg && inReady) {
+          phaseCounter := freqReg
+        }
+      }
+      
       // phase converter
       when(poff.get.in(0)._1.fire()){
         phaseConverter.io.phase := phaseCounter + poff.get.in(0)._1.bits.data.asUInt()
       }.otherwise{
         phaseConverter.io.phase := phaseCounter
       }
-
-      poff.get.in(0)._1.ready := RegNext(ioout.ready, false.B)
       
-      ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
+      val inFire = RegInit(Bool(), false.B)
+      when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
+      
+      poff.get.in(0)._1.ready := inReady
+      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      
+      val skidInLast = Wire(Flipped(DecoupledIO(Bool())))
+      val skidOutLast = Wire(DecoupledIO(Bool()))
+      skidOutLast.ready := ioout.ready
+      skidInLast.bits := ShiftRegister(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire(), 0, false.B)
+      skidInLast.valid := poff.get.in(0)._1.valid
+      Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
+      val lastOut = RegInit(Bool(), false.B)
+      val indicator = RegInit(Bool(), false.B)
+      when(skidOutLast.bits) {indicator := true.B}
+      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B} .otherwise {lastOut := false.B}
+      ioout.bits.last := lastOut
+      
+      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+
+      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      
+      if (params.useMultiplier) {
+        when(inFire){
+          when(!enableMultiplying) {
+            outputBufferSin := phaseConverter.io.sinOut
+            outputBufferCos := phaseConverter.io.cosOut
+            outputBufferSin2 := outputBufferSin
+            outputBufferCos2 := outputBufferCos
+          }.otherwise {
+            DspContext.withBinaryPointGrowth(0) {
+              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferSin2 := (outputBufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (outputBufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        }
+      } else {
+        when(inFire){
+          outputBufferSin := phaseConverter.io.sinOut
+          outputBufferCos := phaseConverter.io.cosOut
+          outputBufferSin2 := outputBufferSin
+          outputBufferCos2 := outputBufferCos
+        }
+      }
+
+      when(queueCounter === 2.U){
+        when((inputEnableReg && inReady) && inFire){
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        }.elsewhen((inputEnableReg && inReady) && !inFire){
+          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        }.elsewhen(!(inputEnableReg && inReady) && inFire){
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        }.otherwise{
+          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        }
+      }.otherwise{
+        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+      }
+      
+      //poff.get.in(0)._1.ready := RegNext(ioout.ready, false.B)
+      //ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
 
     }
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -356,9 +419,9 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     else {
     
-      ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
+      //ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
       
-      val outputReady = ioout.ready
+      //val outputReady = ioout.ready
           
       val freqInit = if((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) 1 else 0
       val freqReg = RegInit(freqInit.U((beatBytes*4).W))
@@ -367,52 +430,165 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
       
-      /*val fields = Seq(
-      RegField(1, enableMultiplying,
-        RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
-      RegField(params.protoOut.getWidth, multiplyingFactor,
-        RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
-      )*/
+      val latency = 2 //if (params.syncROMEnable) 2 else 1
       
-      val enable = outputReady && inputEnableReg
-      ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
+      // generate regmap
+      if (!params.useMultiplier) {
+        if (params.pincType == Config && params.poffType == Config) {
+          val fields = Seq(
+            RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")),
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Fixed && params.poffType == Config) {
+          val fields = Seq(
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Config && params.poffType == Fixed) {
+          val fields = Seq(
+            RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.poffType == Config) {
+          val fields = Seq(
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Fixed) {
+          val fields = Seq(
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+      } else {
+        if (params.pincType == Config && params.poffType == Config) {
+          val fields = Seq(
+            RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+            RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")),
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Fixed && params.poffType == Config) {
+          val fields = Seq(
+            RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+            RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Config && params.poffType == Fixed) {
+          val fields = Seq(
+            RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+            RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.poffType == Config) {
+          val fields = Seq(
+            RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+            RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+        else if (params.pincType == Fixed) {
+          val fields = Seq(
+            RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
+            RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg"))
+          )
+          regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+        }
+      }
+      
+      //val enable = ioout.ready && inputEnableReg
+      //ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
+      
+      val queueCounter = RegInit(0.U(2.W))
+      val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
+      queueCounter := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
+      val lastStateQueueCounter = RegInit(0.U(2.W))
+      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
+      val lastStateQueueCounterWire = Wire(UInt(2.W))
+      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
 
       // phase counter
       if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
-        when(outputReady && inputEnableReg && ioout.ready) {
+        //when(inputEnableReg && ioout.ready) {
+        when(inputEnableReg && inReady) {
           phaseCounter := phaseCounter + freqReg
         }
       } 
       else {
-        phaseCounter := freqReg
+        when(inputEnableReg && inReady) {
+          phaseCounter := freqReg
+        }
       }
 
-        // phase converter
+      // phase converter
       phaseConverter.io.phase := phaseCounter + poffReg
+      
+      val inFire = RegInit(Bool(), false.B)
+      when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
+      
+      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      ioout.bits.last := false.B
+      
+      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
 
-      // generate regmap
-      if (params.pincType == Config && params.poffType == Config) {
-        val fields = Seq(RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")),
-                          RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control")))
-        regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      
+      if (params.useMultiplier) {
+        when(inFire){
+          when(!enableMultiplying) {
+            outputBufferSin := phaseConverter.io.sinOut
+            outputBufferCos := phaseConverter.io.cosOut
+            outputBufferSin2 := outputBufferSin
+            outputBufferCos2 := outputBufferCos
+          }.otherwise {
+            DspContext.withBinaryPointGrowth(0) {
+              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferSin2 := (outputBufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (outputBufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        }
+      } else {
+        when(inFire){
+          outputBufferSin := phaseConverter.io.sinOut
+          outputBufferCos := phaseConverter.io.cosOut
+          outputBufferSin2 := outputBufferSin
+          outputBufferCos2 := outputBufferCos
+        }
       }
-      else if (params.pincType == Fixed && params.poffType == Config) {
-        val fields = Seq(RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
-                          RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control")))
-        regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
+
+      when(queueCounter === 2.U){
+        when((inputEnableReg && inReady) && inFire){
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        }.elsewhen((inputEnableReg && inReady) && !inFire){
+          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        }.elsewhen(!(inputEnableReg && inReady) && inFire){
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        }.otherwise{
+          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        }
+      }.otherwise{
+        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
       }
-      else if (params.pincType == Config && params.poffType == Fixed) {
-        val fields = Seq(RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")))
-        regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
-      }
-      else if (params.poffType == Config) {
-        val fields = Seq(RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control")))
-        regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
-      }
-      else if (params.pincType == Fixed) {
-        val fields = Seq(RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")))
-        regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
-      }
+
     }
   }
 }
@@ -421,7 +597,8 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
 class AXI4NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](params: NCOParams[T], address: AddressSet, beatBytes: Int)(implicit p: Parameters) extends NCOLazyModuleBlock[T](params, beatBytes) {
     //val mem = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config) Some(AXI4RegisterNode(address = address, beatBytes = beatBytes)) else None
     //override def regmap(mapping: (Int, Seq[RegField])*): Unit = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config) mem.get.regmap(mapping:_*) else None
-    val mem = Some(AXI4RegisterNode(address = address, beatBytes = beatBytes))
+    //val mem = Some(AXI4RegisterNode(address = address, beatBytes = beatBytes))
+    val mem = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config || params.useMultiplier) Some(AXI4RegisterNode(address = address, beatBytes = beatBytes)) else None
     override def regmap(mapping: (Int, Seq[RegField])*): Unit = mem.get.regmap(mapping:_*)
 }
 
@@ -463,15 +640,20 @@ object NCOLazyModuleApp extends App
     syncROMEnable = false,
     phaseAccEnable = true,
     roundingMode = RoundHalfUp,
-    pincType = Config,
-    poffType = Config,
+    pincType = Streaming,
+    poffType = Fixed,
     useMultiplier = false
   )
     val beatBytes = 4
 
   implicit val p: Parameters = Parameters.empty
 
+  //val ncoModule = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
+  //})
   val ncoModule = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
+    val ioparallelin = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
+    freq.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioparallelin
+    val inStream = InModuleBody { ioparallelin.makeIO() }
   })
   chisel3.Driver.execute(Array("--target-dir", "verilog", "--top-name", "NCOLazyModuleApp"), ()=> ncoModule.module) // generate verilog code
 }
