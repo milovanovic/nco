@@ -71,18 +71,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
       }
 
-      
-      val skidInLast = Wire(Flipped(DecoupledIO(Bool())))
-      val skidOutLast = Wire(DecoupledIO(Bool()))
-      skidOutLast.ready := ioout.ready
-      skidInLast.bits := ShiftRegister(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire(), 0, false.B)
-      skidInLast.valid := freq.get.in(0)._1.valid
-      Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
       val lastOut = RegInit(Bool(), false.B)
       val indicator = RegInit(Bool(), false.B)
-      when(skidOutLast.bits) {indicator := true.B}
-      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B} .otherwise {lastOut := false.B}
-      ioout.bits.last := lastOut
+      val counterLast = RegInit(UInt(2.W), 0.U)
+      when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
+      when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
+      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
@@ -198,17 +193,16 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       // phase converter
       phaseConverter.io.phase := phaseCounter + poffReg
       
-      val skidInLast = Wire(Flipped(DecoupledIO(Bool())))
-      val skidOutLast = Wire(DecoupledIO(Bool()))
-      skidOutLast.ready := ioout.ready
-      skidInLast.bits := ShiftRegister(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire(), 0, false.B)
-      skidInLast.valid := freq.get.in(0)._1.valid
-      Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
+      val inFire = RegInit(Bool(), false.B)
+      when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
+      
       val lastOut = RegInit(Bool(), false.B)
       val indicator = RegInit(Bool(), false.B)
-      when(skidOutLast.bits) {indicator := true.B}
-      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B} .otherwise {lastOut := false.B}
-      ioout.bits.last := lastOut
+      val counterLast = RegInit(UInt(2.W), 0.U)
+      when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
+      when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
+      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
@@ -216,9 +210,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
       val lastStateQueueCounterWire = Wire(UInt(2.W))
       lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
-      
-      val inFire = RegInit(Bool(), false.B)
-      when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
       
       freq.get.in(0)._1.ready := (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
       ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
@@ -353,17 +344,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       poff.get.in(0)._1.ready := inReady
       ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
       
-      val skidInLast = Wire(Flipped(DecoupledIO(Bool())))
-      val skidOutLast = Wire(DecoupledIO(Bool()))
-      skidOutLast.ready := ioout.ready
-      skidInLast.bits := ShiftRegister(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire(), 0, false.B)
-      skidInLast.valid := poff.get.in(0)._1.valid
-      Skid2(1, skidInLast, skidOutLast) := skidInLast.bits
       val lastOut = RegInit(Bool(), false.B)
       val indicator = RegInit(Bool(), false.B)
-      when(skidOutLast.bits) {indicator := true.B}
-      when(skidOutLast.bits && !indicator) {lastOut := true.B}. elsewhen(ioout.bits.last && ioout.valid) {lastOut := false.B} .otherwise {lastOut := false.B}
-      ioout.bits.last := lastOut
+      val counterLast = RegInit(UInt(2.W), 0.U)
+      when(!poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
+      when(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
+      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
       
       val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
@@ -595,9 +582,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
 
 
 class AXI4NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](params: NCOParams[T], address: AddressSet, beatBytes: Int)(implicit p: Parameters) extends NCOLazyModuleBlock[T](params, beatBytes) {
-    //val mem = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config) Some(AXI4RegisterNode(address = address, beatBytes = beatBytes)) else None
-    //override def regmap(mapping: (Int, Seq[RegField])*): Unit = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config) mem.get.regmap(mapping:_*) else None
-    //val mem = Some(AXI4RegisterNode(address = address, beatBytes = beatBytes))
     val mem = if (params.pincType == Fixed || params.pincType == Config || params.poffType == Config || params.useMultiplier) Some(AXI4RegisterNode(address = address, beatBytes = beatBytes)) else None
     override def regmap(mapping: (Int, Seq[RegField])*): Unit = mem.get.regmap(mapping:_*)
 }
