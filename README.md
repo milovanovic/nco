@@ -22,6 +22,8 @@ The NCO generator has following features:
 	- Phase dithering or Taylor series correction options provide high dynamic range signals
 	- Output data precision can vary
 	- Different input interfaces
+	- Optinal multiplier used for the output
+	- Output buffering
 
 The generated module consists of a Phase Generator and a SIN/COS Lookup Table (phase to sinusoid conversion). SIN/COS Lookup Table can also be used individually. The Phase Generator consists of a phase accumulator followed 
 by an optional adder to provide addition of phase offset. The phase increment and phase offset can be independently configured to be either fixed, programmable or streaming (AXI4 interface). When configured as fixed, the 
@@ -85,7 +87,8 @@ NCO parameters are defined inside `case class NCOParams`. User can set up these 
 	  phaseAccEnable: Boolean,
 	  roundingMode: TrimType = RoundHalfUp,
 	  pincType: InterfaceType = Streaming,
-	  poffType: InterfaceType = Streaming
+	  poffType: InterfaceType = Streaming,
+	  useMultiplier: Boolean = false
 	)
 
 The explanation of each parameter is given below:
@@ -103,6 +106,7 @@ The explanation of each parameter is given below:
 - `roundingMode` - rounding mode used for trimming values to fixed point
 - `pincType` - type of the input interface for phase increment/absolute phase value
 - `poffType` - type of the input interface for phase offset
+- `useMultiplier` - determines if output multiplier will be used
 
 ## Tests
 
@@ -113,7 +117,20 @@ Besides main source code, various tests for NCO generator are provided in this r
 - `NCOSpec.scala` - used for testing complete NCO module. Can be run using `testOnly nco.NCOSpec` command
 - `analysesTesterUtil.scala` - contains functions used for plotting frequency and time domains of signals
 - `analysesTester` - contains tester used for parameter analysis of the NCO generator
-- `analysesSpec` - used for analysing performance of generated NCO modules depending on several parameters.
-Can be run using `testOnly nco.NCOAnalysisSpec` command
+- `analysesSpec` - used for analysing performance of generated NCO modules depending on several parameters. Can be run using `testOnly nco.NCOAnalysisSpec` command
 
 Tester functions such as `peek`, `poke` and `expect`, available inside `DspTester` (check [dsptools Chisel library ](http://github.com/ucb-bar/dsptools)), are extensively used for design testing.
+
+## NCOLazyModuleBlock
+
+NCOLazyModuleBlock is a generator of numerically controlled oscillators with the same parameters and functionalities as the NCO generator described above, with one difference: it can use AXI4 Interface for accessing 
+memory-mapped control registers. Whether this interface will be used or not depends on the parameters for input interfaces and multiplier. Following memory-mapped control registers can exist:
+- `poff` - phase offset value when `poffType` parameter is set as Config
+- `freq` - phase increment/phase value when `pincType` parameter is set as Config
+- `inputEN` - input enable signal when `pincType` parameter is set as Fixed
+- `enableMultiplying` - multiplying enable signal when `useMultiplier` parameter is set as true
+- `multiplyingFactor` - factor value for multiplying when `useMultiplier` parameter is set as true. This value can be smaller or equal 1 and it is of the `protoOut` data type and format. It can be assigned by sending 
+the binary representation in the appropriate format converted to integer value. For example, if FixedPoint data type with width equal to 16 and binary point equal to 14 is used, for setting the multiplying factor 
+to 0.5, value of 0x2000 should be sent (binary representation of 0.5 in appropriate format is 00.10000000000000, converted to integer value it is 0010000000000000 binary or 0x2000 hex).
+
+Also, input phase/phase increment and/or phase offset can have AXI4 Streaming Slave Interface if appropriate parameters are set as Streaming. Output signals always have AXI4 Streaming Master Interface.
