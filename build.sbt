@@ -30,9 +30,9 @@ name := "nco-module"
 
 version := "1.0"
 
-scalaVersion := "2.12.11"
+scalaVersion := "2.12.12"
 
-crossScalaVersions := Seq("2.12.11", "2.11.12")
+crossScalaVersions := Seq("2.12.12", "2.11.12")
 
 resolvers ++= Seq(
   Resolver.sonatypeRepo("snapshots"),
