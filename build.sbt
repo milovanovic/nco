@@ -1,4 +1,4 @@
-// See README.md for license details.
+// SPDX-License-Identifier: Apache-2.0
 
 def scalacOptionsVersion(scalaVersion: String): Seq[String] = {
   Seq() ++ {
