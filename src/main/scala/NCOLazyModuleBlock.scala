@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 package nco
 
 import chisel3._
@@ -36,7 +34,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
     
     val phaseConverter = Module(new NCOTable(params.tableParams))
     val phaseCounter   = RegInit(UInt(params.phaseWidth.W), 0.U)
-
+    
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     // pinc & poff streaming
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -55,7 +53,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
       
-      val latency = 2 // if (params.syncROMEnable) 2 else 1
+      val latency = if (params.useMultiplier) 3 else 2
       
       // phase counter
       if (params.phaseAccEnable) {
@@ -78,8 +76,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val counterLast = RegInit(UInt(2.W), 0.U)
       when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
       when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      if (params.useMultiplier) {
+        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
+      } else {
+        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      }
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
@@ -87,6 +90,8 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
       val lastStateQueueCounterWire = Wire(UInt(2.W))
       lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
+      val queueCounterWire = Wire(UInt(2.W))
+      queueCounterWire := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
       
       val queueCounterPoff = RegInit(0.U(2.W))
       queueCounterPoff := queueCounterPoff +& poff.get.in(0)._1.fire() -& poff.get.in(0)._1.fire()
@@ -96,7 +101,11 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       
       freq.get.in(0)._1.ready := (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
       poff.get.in(0)._1.ready := (queueCounterPoff < latency.U) || (queueCounterPoff === latency.U && ioout.ready)
-      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      if (params.useMultiplier) {
+        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
+      } else {
+        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      }
       
       val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
@@ -105,21 +114,83 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       
       if (params.useMultiplier) {
+        
+        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        
+        val started = RegInit(Bool(), false.B)
+        when(ioout.fire()) {started := true.B}
+        
         when(inFire){
           when(!enableMultiplying) {
-            outputBufferSin := phaseConverter.io.sinOut
-            outputBufferCos := phaseConverter.io.cosOut
-            outputBufferSin2 := outputBufferSin
-            outputBufferCos2 := outputBufferCos
+            bufferSin := phaseConverter.io.sinOut
+            bufferCos := phaseConverter.io.cosOut
+            outputBufferSin := bufferSin
+            outputBufferCos := bufferCos
+            bufferSin2 := outputBufferSin
+            bufferCos2 := outputBufferCos
           }.otherwise {
             DspContext.withBinaryPointGrowth(0) {
-              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
+              bufferSin := phaseConverter.io.sinOut
+              bufferCos := phaseConverter.io.cosOut
+              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              bufferSin2 := outputBufferSin
+              bufferCos2 := outputBufferCos
             }
           }
         }
+        when (enableMultiplying) {
+          DspContext.withBinaryPointGrowth(0) {
+            when(queueCounter === 3.U){
+              when(queueCounterWire === 2.U){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.otherwise{
+                outputBufferSin2 := bufferSin2
+                outputBufferCos2 := bufferCos2
+              }
+            }.otherwise{
+              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        } .otherwise {
+          when(queueCounter === 3.U){
+            when(queueCounterWire === 2.U){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.otherwise{
+              outputBufferSin2 := bufferSin2
+              outputBufferCos2 := bufferCos2
+            }
+          }.otherwise{
+            outputBufferSin2 := bufferSin
+            outputBufferCos2 := bufferCos
+          }
+        }
+        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        
       } else {
         when(inFire){
           outputBufferSin := phaseConverter.io.sinOut
@@ -127,22 +198,23 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           outputBufferSin2 := outputBufferSin
           outputBufferCos2 := outputBufferCos
         }
-      }
-
-      when(queueCounter === 2.U){
-        when(freq.get.in(0)._1.fire() && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-        }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        
+        when(queueCounter === 2.U){
+          when(freq.get.in(0)._1.fire() && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.otherwise{
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }
         }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
         }
-      }.otherwise{
-        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
       }
-    } 
+    }
+    
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     // pinc streaming
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -178,8 +250,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
 
-      
-      val latency = 2 //if (params.syncROMEnable) 2 else 1
+      val latency = if (params.useMultiplier) 3 else 2
       
       // phase counter
       if (params.phaseAccEnable) {
@@ -203,8 +274,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val counterLast = RegInit(UInt(2.W), 0.U)
       when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
       when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      if (params.useMultiplier) {
+        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
+      } else {
+        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      }
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
@@ -212,9 +288,15 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
       val lastStateQueueCounterWire = Wire(UInt(2.W))
       lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
+      val queueCounterWire = Wire(UInt(2.W))
+      queueCounterWire := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
       
       freq.get.in(0)._1.ready := (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
-      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      if (params.useMultiplier) {
+        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
+      } else {
+        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      }
       
       val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
@@ -223,21 +305,83 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       
       if (params.useMultiplier) {
+        
+        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        
+        val started = RegInit(Bool(), false.B)
+        when(ioout.fire()) {started := true.B}
+        
         when(inFire){
           when(!enableMultiplying) {
-            outputBufferSin := phaseConverter.io.sinOut
-            outputBufferCos := phaseConverter.io.cosOut
-            outputBufferSin2 := outputBufferSin
-            outputBufferCos2 := outputBufferCos
+            bufferSin := phaseConverter.io.sinOut
+            bufferCos := phaseConverter.io.cosOut
+            outputBufferSin := bufferSin
+            outputBufferCos := bufferCos
+            bufferSin2 := outputBufferSin
+            bufferCos2 := outputBufferCos
           }.otherwise {
             DspContext.withBinaryPointGrowth(0) {
-              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
+              bufferSin := phaseConverter.io.sinOut
+              bufferCos := phaseConverter.io.cosOut
+              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              bufferSin2 := outputBufferSin
+              bufferCos2 := outputBufferCos
             }
           }
         }
+        when (enableMultiplying) {
+          DspContext.withBinaryPointGrowth(0) {
+            when(queueCounter === 3.U){
+              when(queueCounterWire === 2.U){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.otherwise{
+                outputBufferSin2 := bufferSin2
+                outputBufferCos2 := bufferCos2
+              }
+            }.otherwise{
+              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        } .otherwise {
+          when(queueCounter === 3.U){
+            when(queueCounterWire === 2.U){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.otherwise{
+              outputBufferSin2 := bufferSin2
+              outputBufferCos2 := bufferCos2
+            }
+          }.otherwise{
+            outputBufferSin2 := bufferSin
+            outputBufferCos2 := bufferCos
+          }
+        }
+        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        
       } else {
         when(inFire){
           outputBufferSin := phaseConverter.io.sinOut
@@ -245,22 +389,23 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           outputBufferSin2 := outputBufferSin
           outputBufferCos2 := outputBufferCos
         }
-      }
-
-      when(queueCounter === 2.U){
-        when(freq.get.in(0)._1.fire() && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-        }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        
+        when(queueCounter === 2.U){
+          when(freq.get.in(0)._1.fire() && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.otherwise{
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }
         }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
         }
-      }.otherwise{
-        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
       }
     }
+    
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     // poff streaming
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -269,22 +414,19 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val freqInit = if((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) 1 else 0
       
       // registers
-      val inputEnableReg = RegInit(true.B)
+      val inputEnableReg = RegInit(false.B)
       val freqReg = RegInit(freqInit.U((beatBytes*4).W))
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
       
-      val latency = 2 //if (params.syncROMEnable) 2 else 1
-      
-      //val enable = ioout.ready && inputEnableReg
-
-      //ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
+      val latency = if (params.useMultiplier) 3 else 2 
       
       // regmap
       if ((params.pincType == Config) && params.useMultiplier) {
         val fields = Seq(
           RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
           RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+          RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
           RegField(beatBytes*4, freqReg, RegFieldDesc(name = "freq",    desc = "nco frequency control"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
@@ -297,6 +439,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       } else if (params.pincType == Config) {
         val fields = Seq(
+          RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
           RegField(beatBytes*4, freqReg, RegFieldDesc(name = "freq",    desc = "nco frequency control"))
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
@@ -320,6 +463,8 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
       val lastStateQueueCounterWire = Wire(UInt(2.W))
       lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
+      val queueCounterWire = Wire(UInt(2.W))
+      queueCounterWire := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
       
       // phase counter
       if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
@@ -344,15 +489,24 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
       
       poff.get.in(0)._1.ready := inReady
-      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      if (params.useMultiplier) {
+        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
+      } else {
+        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      }
       
       val lastOut = RegInit(Bool(), false.B)
       val indicator = RegInit(Bool(), false.B)
       val counterLast = RegInit(UInt(2.W), 0.U)
       when(!poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
       when(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-      ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      if (params.useMultiplier) {
+        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
+      } else {
+        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
+        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
+      }
       
       val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
@@ -361,21 +515,83 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       
       if (params.useMultiplier) {
+        
+        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        
+        val started = RegInit(Bool(), false.B)
+        when(ioout.fire()) {started := true.B}
+        
         when(inFire){
           when(!enableMultiplying) {
-            outputBufferSin := phaseConverter.io.sinOut
-            outputBufferCos := phaseConverter.io.cosOut
-            outputBufferSin2 := outputBufferSin
-            outputBufferCos2 := outputBufferCos
+            bufferSin := phaseConverter.io.sinOut
+            bufferCos := phaseConverter.io.cosOut
+            outputBufferSin := bufferSin
+            outputBufferCos := bufferCos
+            bufferSin2 := outputBufferSin
+            bufferCos2 := outputBufferCos
           }.otherwise {
             DspContext.withBinaryPointGrowth(0) {
-              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
+              bufferSin := phaseConverter.io.sinOut
+              bufferCos := phaseConverter.io.cosOut
+              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              bufferSin2 := outputBufferSin
+              bufferCos2 := outputBufferCos
             }
           }
         }
+        when (enableMultiplying) {
+          DspContext.withBinaryPointGrowth(0) {
+            when(queueCounter === 3.U){
+              when(queueCounterWire === 2.U){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen(((inputEnableReg && inReady) && inFire)){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen((inputEnableReg && inReady) && !inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.elsewhen(!(inputEnableReg && inReady) && inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.otherwise{
+                outputBufferSin2 := bufferSin2
+                outputBufferCos2 := bufferCos2
+              }
+            }.otherwise{
+              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        } .otherwise {
+          when(queueCounter === 3.U){
+            when(queueCounterWire === 2.U){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen(((inputEnableReg && inReady) && inFire)){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen((inputEnableReg && inReady) && !inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.elsewhen(!(inputEnableReg && inReady) && inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.otherwise{
+              outputBufferSin2 := bufferSin2
+              outputBufferCos2 := bufferCos2
+            }
+          }.otherwise{
+            outputBufferSin2 := bufferSin
+            outputBufferCos2 := bufferCos
+          }
+        }
+        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        
       } else {
         when(inFire){
           outputBufferSin := phaseConverter.io.sinOut
@@ -383,48 +599,42 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           outputBufferSin2 := outputBufferSin
           outputBufferCos2 := outputBufferCos
         }
-      }
-
-      when(queueCounter === 2.U){
-        when((inputEnableReg && inReady) && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }.elsewhen((inputEnableReg && inReady) && !inFire){
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-        }.elsewhen(!(inputEnableReg && inReady) && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        
+        when(queueCounter === 2.U){
+          when((inputEnableReg && inReady) && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.elsewhen((inputEnableReg && inReady) && !inFire){
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }.elsewhen(!(inputEnableReg && inReady) && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.otherwise{
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }
         }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
         }
-      }.otherwise{
-        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
       }
-      
-      //poff.get.in(0)._1.ready := RegNext(ioout.ready, false.B)
-      //ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
-
     }
+    
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     // no streaming
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
     else {
-    
-      //ioout.bits.data := Cat(phaseConverter.io.cosOut.asUInt(), phaseConverter.io.sinOut.asUInt())
-      
-      //val outputReady = ioout.ready
           
       val freqInit = if((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) 1 else 0
       val freqReg = RegInit(freqInit.U((beatBytes*4).W))
-      val inputEnableReg = RegInit(true.B)
+      val inputEnableReg = RegInit(false.B)
       val poffReg = RegInit(0.U((beatBytes*4).W))
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
       
-      val latency = 2 //if (params.syncROMEnable) 2 else 1
+      val latency = if (params.useMultiplier) 3 else 2 //2 //if (params.syncROMEnable) 2 else 1
       
       // generate regmap
       if (!params.useMultiplier) {
         if (params.pincType == Config && params.poffType == Config) {
           val fields = Seq(
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")),
             RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
           )
@@ -439,12 +649,14 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
         else if (params.pincType == Config && params.poffType == Fixed) {
           val fields = Seq(
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control"))
           )
           regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
         }
         else if (params.poffType == Config) {
           val fields = Seq(
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
           )
           regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
@@ -460,6 +672,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           val fields = Seq(
             RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
             RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control")),
             RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
           )
@@ -478,6 +691,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           val fields = Seq(
             RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
             RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, freqReg,   RegFieldDesc(name = "freq",    desc = "nco frequency control"))
           )
           regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
@@ -486,6 +700,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           val fields = Seq(
             RegField(1, enableMultiplying, RegFieldDesc(name = "enableMultiplying", desc = "enable bit for multiplying")),
             RegField(params.protoOut.getWidth, multiplyingFactor, RegFieldDesc(name = "multiplyingFactor", desc = "multiplying factor")),
+            RegField(1, inputEnableReg,   RegFieldDesc(name = "inputEN",    desc = "input enable reg")),
             RegField(beatBytes*4, poffReg,   RegFieldDesc(name = "poff",    desc = "nco phase offset control"))
           )
           regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
@@ -499,9 +714,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
         }
       }
-      
-      //val enable = ioout.ready && inputEnableReg
-      //ioout.valid     := Mux(ioout.ready, RegNext(enable), ioout.ready)
       
       val queueCounter = RegInit(0.U(2.W))
       val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
@@ -510,10 +722,11 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
       val lastStateQueueCounterWire = Wire(UInt(2.W))
       lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
+      val queueCounterWire = Wire(UInt(2.W))
+      queueCounterWire := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
 
       // phase counter
       if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
-        //when(inputEnableReg && ioout.ready) {
         when(inputEnableReg && inReady) {
           phaseCounter := phaseCounter + freqReg
         }
@@ -530,7 +743,11 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val inFire = RegInit(Bool(), false.B)
       when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
       
-      ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      if (params.useMultiplier) {
+        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
+      } else {
+        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      }
       ioout.bits.last := false.B
       
       val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
@@ -540,21 +757,83 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       
       if (params.useMultiplier) {
+        
+        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        
+        val started = RegInit(Bool(), false.B)
+        when(ioout.fire()) {started := true.B}
+        
         when(inFire){
           when(!enableMultiplying) {
-            outputBufferSin := phaseConverter.io.sinOut
-            outputBufferCos := phaseConverter.io.cosOut
-            outputBufferSin2 := outputBufferSin
-            outputBufferCos2 := outputBufferCos
+            bufferSin := phaseConverter.io.sinOut
+            bufferCos := phaseConverter.io.cosOut
+            outputBufferSin := bufferSin
+            outputBufferCos := bufferCos
+            bufferSin2 := outputBufferSin
+            bufferCos2 := outputBufferCos
           }.otherwise {
             DspContext.withBinaryPointGrowth(0) {
-              outputBufferSin := (phaseConverter.io.sinOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (phaseConverter.io.cosOut.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
+              bufferSin := phaseConverter.io.sinOut
+              bufferCos := phaseConverter.io.cosOut
+              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              bufferSin2 := outputBufferSin
+              bufferCos2 := outputBufferCos
             }
           }
         }
+        when (enableMultiplying) {
+          DspContext.withBinaryPointGrowth(0) {
+            when(queueCounter === 3.U){
+              when(queueCounterWire === 2.U){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen(((inputEnableReg && inReady) && inFire)){
+                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              }.elsewhen((inputEnableReg && inReady) && !inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.elsewhen(!(inputEnableReg && inReady) && inFire){
+                outputBufferSin2 := outputBufferSin
+                outputBufferCos2 := outputBufferCos
+              }.otherwise{
+                outputBufferSin2 := bufferSin2
+                outputBufferCos2 := bufferCos2
+              }
+            }.otherwise{
+              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+            }
+          }
+        } .otherwise {
+          when(queueCounter === 3.U){
+            when(queueCounterWire === 2.U){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen(((inputEnableReg && inReady) && inFire)){
+              outputBufferSin2 := bufferSin
+              outputBufferCos2 := bufferCos
+            }.elsewhen((inputEnableReg && inReady) && !inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.elsewhen(!(inputEnableReg && inReady) && inFire){
+              outputBufferSin2 := outputBufferSin
+              outputBufferCos2 := outputBufferCos
+            }.otherwise{
+              outputBufferSin2 := bufferSin2
+              outputBufferCos2 := bufferCos2
+            }
+          }.otherwise{
+            outputBufferSin2 := bufferSin
+            outputBufferCos2 := bufferCos
+          }
+        }
+        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        
       } else {
         when(inFire){
           outputBufferSin := phaseConverter.io.sinOut
@@ -562,22 +841,21 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           outputBufferSin2 := outputBufferSin
           outputBufferCos2 := outputBufferCos
         }
-      }
-
-      when(queueCounter === 2.U){
-        when((inputEnableReg && inReady) && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }.elsewhen((inputEnableReg && inReady) && !inFire){
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-        }.elsewhen(!(inputEnableReg && inReady) && inFire){
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+        
+        when(queueCounter === 2.U){
+          when((inputEnableReg && inReady) && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.elsewhen((inputEnableReg && inReady) && !inFire){
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }.elsewhen(!(inputEnableReg && inReady) && inFire){
+            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
+          }.otherwise{
+            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          }
         }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
         }
-      }.otherwise{
-        ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
       }
-
     }
   }
 }
@@ -628,7 +906,7 @@ object NCOLazyModuleApp extends App
     roundingMode = RoundHalfUp,
     pincType = Streaming,
     poffType = Fixed,
-    useMultiplier = false
+    useMultiplier = true
   )
     val beatBytes = 4
 

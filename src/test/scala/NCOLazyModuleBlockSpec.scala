@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 package nco
 
 
@@ -55,7 +53,7 @@ class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4
   poke(dut.out.ready, 1)
   step(600)
   */
-  
+  /*
   // conf, fixed
   memWriteWord(csrAddress.base, 1)
   step(1)
@@ -83,9 +81,10 @@ class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4
   poke(dut.out.ready, 1)
   step(2)
   poke(dut.out.ready, 0)
-  step(2)
+  step(2)*/
   
-  /*poke(dut.freq.get.in(0)._1.bits.data, 1)
+  /*
+  poke(dut.freq.get.in(0)._1.bits.data, 1)
   step(1)
   poke(dut.freq.get.in(0)._1.bits.last, 0)
   step(1)
@@ -102,7 +101,107 @@ class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4
     i+=1
   }*/
   
+  memWriteWord(csrAddress.base, 1)
+  memWriteWord(csrAddress.base + beatBytes, 0x2000)
+  memWriteWord(csrAddress.base + 3*beatBytes, 1)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  //memWriteWord(csrAddress.base + beatBytes, 1)
+  //memWriteWord(csrAddress.base, 1)
+  step(5)
+  poke(dut.out.ready, 1)
+  step(20)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(20)
+  poke(dut.out.ready, 0)
+  step(10)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(1)
+  poke(dut.out.ready, 1)
+  step(2)
+  poke(dut.out.ready, 0)
+  step(2)
+  poke(dut.out.ready, 1)
+  step(2)
+  poke(dut.out.ready, 0)
+  step(2)
+  poke(dut.out.ready, 1)
+  step(2)
+  poke(dut.out.ready, 0)
+  step(5)
+  poke(dut.out.ready, 1)
+  step(5)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(3)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(3)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(1)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(2)
+  poke(dut.out.ready, 0)
+  step(3)
+  poke(dut.out.ready, 1)
+  step(10)
   
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  step(1)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  step(1)
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  step(2)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  step(2)
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  step(3)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  step(3)
+  memWriteWord(csrAddress.base + 2*beatBytes, 0)
+  step(4)
+  memWriteWord(csrAddress.base + 2*beatBytes, 1)
+  step(10)
 
 }
 
@@ -118,11 +217,12 @@ class NCOLazyModuleBlockSpec extends FlatSpec with Matchers {
     rasterizedMode = false,
     nInterpolationTerms = 0,
     ditherEnable = false,
-    syncROMEnable = true,
+    syncROMEnable = false,
     phaseAccEnable = true,
     roundingMode = RoundHalfUp,
     pincType = Config,
-    poffType = Fixed
+    poffType = Fixed,
+    useMultiplier = true
   )
   val beatBytes = 4
   
@@ -130,6 +230,11 @@ class NCOLazyModuleBlockSpec extends FlatSpec with Matchers {
     val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = 4)  with AXI4Block {
       override def standaloneParams = AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 1)
     })
+    /*val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
+      val ioparallelin = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
+      poff.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioparallelin
+      val inStream = InModuleBody { ioparallelin.makeIO() }
+    })*/
     chisel3.iotesters.Driver.execute(Array("-tiwv", "-tbn", "verilator", "-tivsuv"), () => lazyDut.module) {
       c => new NCOLazyModuleBlockTester(lazyDut,  AddressSet(0x000000, 0xFF), 4)
     } should be (true)
