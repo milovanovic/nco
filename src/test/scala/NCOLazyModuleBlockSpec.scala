@@ -101,12 +101,12 @@ class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4
     i+=1
   }*/
   
-  memWriteWord(csrAddress.base, 1)
+  memWriteWord(csrAddress.base, 0)
   memWriteWord(csrAddress.base + beatBytes, 0x2000)
   memWriteWord(csrAddress.base + 3*beatBytes, 1)
   memWriteWord(csrAddress.base + 2*beatBytes, 1)
-  //memWriteWord(csrAddress.base + beatBytes, 1)
-  //memWriteWord(csrAddress.base, 1)
+//   memWriteWord(csrAddress.base + beatBytes, 1)
+//   memWriteWord(csrAddress.base, 1)
   step(5)
   poke(dut.out.ready, 1)
   step(20)
@@ -222,7 +222,8 @@ class NCOLazyModuleBlockSpec extends FlatSpec with Matchers {
     roundingMode = RoundHalfUp,
     pincType = Config,
     poffType = Fixed,
-    useMultiplier = true
+    useMultiplier = true,
+    numMulPipes = 1
   )
   val beatBytes = 4
   

@@ -53,8 +53,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
       
-      val latency = if (params.useMultiplier) 3 else 2
-      
       // phase counter
       if (params.phaseAccEnable) {
         when(freq.get.in(0)._1.fire()) {
@@ -70,149 +68,60 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
           phaseCounter := freq.get.in(0)._1.bits.data.asUInt()
         }
       }
-
-      val lastOut = RegInit(Bool(), false.B)
-      val indicator = RegInit(Bool(), false.B)
-      val counterLast = RegInit(UInt(2.W), 0.U)
-      when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
-      when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      if (params.useMultiplier) {
-        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
-      } else {
-        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
-      }
       
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
-      val lastStateQueueCounter = RegInit(0.U(2.W))
-      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
-      val lastStateQueueCounterWire = Wire(UInt(2.W))
-      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
-      val queueCounterWire = Wire(UInt(2.W))
-      queueCounterWire := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
       
       val queueCounterPoff = RegInit(0.U(2.W))
       queueCounterPoff := queueCounterPoff +& poff.get.in(0)._1.fire() -& poff.get.in(0)._1.fire()
+      
+      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
 
       val inFire = RegInit(Bool(), false.B)
       when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
       
       freq.get.in(0)._1.ready := (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
       poff.get.in(0)._1.ready := (queueCounterPoff < latency.U) || (queueCounterPoff === latency.U && ioout.ready)
-      if (params.useMultiplier) {
-        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
-      } else {
-        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
-      }
       
-      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      
+      bufferSin := phaseConverter.io.sinOut
+      bufferCos := phaseConverter.io.cosOut
+      
+      if (params.useMultiplier) {
+      
+        val bufferSin2 = Wire(params.protoOut)
+        val bufferCos2 = Wire(params.protoOut)
+        
+        val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      
-      if (params.useMultiplier) {
-        
-        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        
-        val started = RegInit(Bool(), false.B)
-        when(ioout.fire()) {started := true.B}
-        
-        when(inFire){
-          when(!enableMultiplying) {
-            bufferSin := phaseConverter.io.sinOut
-            bufferCos := phaseConverter.io.cosOut
-            outputBufferSin := bufferSin
-            outputBufferCos := bufferCos
-            bufferSin2 := outputBufferSin
-            bufferCos2 := outputBufferCos
-          }.otherwise {
-            DspContext.withBinaryPointGrowth(0) {
-              bufferSin := phaseConverter.io.sinOut
-              bufferCos := phaseConverter.io.cosOut
-              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              bufferSin2 := outputBufferSin
-              bufferCos2 := outputBufferCos
-            }
-          }
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+          bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
-        when (enableMultiplying) {
-          DspContext.withBinaryPointGrowth(0) {
-            when(queueCounter === 3.U){
-              when(queueCounterWire === 2.U){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.otherwise{
-                outputBufferSin2 := bufferSin2
-                outputBufferCos2 := bufferCos2
-              }
-            }.otherwise{
-              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-            }
-          }
-        } .otherwise {
-          when(queueCounter === 3.U){
-            when(queueCounterWire === 2.U){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.otherwise{
-              outputBufferSin2 := bufferSin2
-              outputBufferCos2 := bufferCos2
-            }
-          }.otherwise{
-            outputBufferSin2 := bufferSin
-            outputBufferCos2 := bufferCos
-          }
-        }
-        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos2.asUInt(), bufferSin2.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
         
       } else {
-        when(inFire){
-          outputBufferSin := phaseConverter.io.sinOut
-          outputBufferCos := phaseConverter.io.cosOut
-          outputBufferSin2 := outputBufferSin
-          outputBufferCos2 := outputBufferCos
-        }
-        
-        when(queueCounter === 2.U){
-          when(freq.get.in(0)._1.fire() && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.otherwise{
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }
-        }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos.asUInt(), bufferSin.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
       }
+      
+      val queueLast = Module(new Queue(Bool(), latency+1, flow = true))
+      queueLast.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+      queueLast.io.enq.bits := ShiftRegister(freq.get.in(0)._1.bits.last, latency, resetData = false.B, en = true.B)
+      queueLast.io.deq.ready := ioout.ready
+      ioout.bits.last := queueLast.io.deq.bits
     }
     
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -249,8 +158,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         )
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
-
-      val latency = if (params.useMultiplier) 3 else 2
       
       // phase counter
       if (params.phaseAccEnable) {
@@ -266,144 +173,55 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       // phase converter
       phaseConverter.io.phase := phaseCounter + poffReg
       
+      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      
       val inFire = RegInit(Bool(), false.B)
       when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
       
-      val lastOut = RegInit(Bool(), false.B)
-      val indicator = RegInit(Bool(), false.B)
-      val counterLast = RegInit(UInt(2.W), 0.U)
-      when(!freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
-      when(freq.get.in(0)._1.bits.last && freq.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      if (params.useMultiplier) {
-        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
-      } else {
-        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
-      }
-      
       val queueCounter = RegInit(0.U(2.W))
       queueCounter := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
-      val lastStateQueueCounter = RegInit(0.U(2.W))
-      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
-      val lastStateQueueCounterWire = Wire(UInt(2.W))
-      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
-      val queueCounterWire = Wire(UInt(2.W))
-      queueCounterWire := queueCounter +& freq.get.in(0)._1.fire() -& ioout.fire()
       
       freq.get.in(0)._1.ready := (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
-      if (params.useMultiplier) {
-        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
-      } else {
-        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
-      }
       
-      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      
+      bufferSin := phaseConverter.io.sinOut
+      bufferCos := phaseConverter.io.cosOut
+      
+      if (params.useMultiplier) {
+      
+        val bufferSin2 = Wire(params.protoOut)
+        val bufferCos2 = Wire(params.protoOut)
+        
+        val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      
-      if (params.useMultiplier) {
-        
-        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        
-        val started = RegInit(Bool(), false.B)
-        when(ioout.fire()) {started := true.B}
-        
-        when(inFire){
-          when(!enableMultiplying) {
-            bufferSin := phaseConverter.io.sinOut
-            bufferCos := phaseConverter.io.cosOut
-            outputBufferSin := bufferSin
-            outputBufferCos := bufferCos
-            bufferSin2 := outputBufferSin
-            bufferCos2 := outputBufferCos
-          }.otherwise {
-            DspContext.withBinaryPointGrowth(0) {
-              bufferSin := phaseConverter.io.sinOut
-              bufferCos := phaseConverter.io.cosOut
-              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              bufferSin2 := outputBufferSin
-              bufferCos2 := outputBufferCos
-            }
-          }
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+          bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
-        when (enableMultiplying) {
-          DspContext.withBinaryPointGrowth(0) {
-            when(queueCounter === 3.U){
-              when(queueCounterWire === 2.U){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.otherwise{
-                outputBufferSin2 := bufferSin2
-                outputBufferCos2 := bufferCos2
-              }
-            }.otherwise{
-              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-            }
-          }
-        } .otherwise {
-          when(queueCounter === 3.U){
-            when(queueCounterWire === 2.U){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen((freq.get.in(0)._1.fire() && inFire)){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.otherwise{
-              outputBufferSin2 := bufferSin2
-              outputBufferCos2 := bufferCos2
-            }
-          }.otherwise{
-            outputBufferSin2 := bufferSin
-            outputBufferCos2 := bufferCos
-          }
-        }
-        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos2.asUInt(), bufferSin2.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
         
       } else {
-        when(inFire){
-          outputBufferSin := phaseConverter.io.sinOut
-          outputBufferCos := phaseConverter.io.cosOut
-          outputBufferSin2 := outputBufferSin
-          outputBufferCos2 := outputBufferCos
-        }
-        
-        when(queueCounter === 2.U){
-          when(freq.get.in(0)._1.fire() && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.elsewhen(freq.get.in(0)._1.fire() && !inFire){
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }.elsewhen(!freq.get.in(0)._1.fire() && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.otherwise{
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }
-        }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos.asUInt(), bufferSin.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
       }
+      
+      val queueLast = Module(new Queue(Bool(), latency+1, flow = true))
+      queueLast.io.enq.valid := ShiftRegister(freq.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+      queueLast.io.enq.bits := ShiftRegister(freq.get.in(0)._1.bits.last, latency, resetData = false.B, en = true.B)
+      queueLast.io.deq.ready := ioout.ready
+      ioout.bits.last := queueLast.io.deq.bits
     }
     
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -418,8 +236,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val freqReg = RegInit(freqInit.U((beatBytes*4).W))
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
-      
-      val latency = if (params.useMultiplier) 3 else 2 
       
       // regmap
       if ((params.pincType == Config) && params.useMultiplier) {
@@ -456,19 +272,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
 
-      val queueCounter = RegInit(0.U(2.W))
+      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val queueCounter = RegInit(0.U(3.W))
       val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
-      queueCounter := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
-      val lastStateQueueCounter = RegInit(0.U(2.W))
-      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
-      val lastStateQueueCounterWire = Wire(UInt(2.W))
-      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
-      val queueCounterWire = Wire(UInt(2.W))
-      queueCounterWire := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
+       queueCounter := queueCounter +& (inReady && inputEnableReg) -& ioout.fire()
       
       // phase counter
       if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
-        //when(inputEnableReg && ioout.ready) {
         when(inputEnableReg && inReady) {
           phaseCounter := phaseCounter + freqReg
         }
@@ -485,135 +295,48 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         phaseConverter.io.phase := phaseCounter
       }
       
-      val inFire = RegInit(Bool(), false.B)
-      when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
-      
       poff.get.in(0)._1.ready := inReady
-      if (params.useMultiplier) {
-        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
-      } else {
-        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
-      }
       
-      val lastOut = RegInit(Bool(), false.B)
-      val indicator = RegInit(Bool(), false.B)
-      val counterLast = RegInit(UInt(2.W), 0.U)
-      when(!poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && !lastOut) {indicator := true.B} .elsewhen(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire()){indicator := false.B} .otherwise{indicator := indicator}
-      when(poff.get.in(0)._1.bits.last && poff.get.in(0)._1.fire() && indicator){lastOut := true.B} .elsewhen(ioout.bits.last) {lastOut := false.B} .otherwise{lastOut := lastOut}
-      if (params.useMultiplier) {
-        when(((counterLast >= 2.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 2.U) && ioout.valid && lastOut
-      } else {
-        when(((counterLast >= 1.U) && ioout.valid && lastOut) || !lastOut){counterLast := 0.U} .elsewhen(lastOut && ioout.valid) {counterLast := counterLast + 1.U} .otherwise {counterLast := counterLast}
-        ioout.bits.last := (counterLast >= 1.U) && ioout.valid && lastOut
-      }
+      val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
       
-      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      bufferSin := phaseConverter.io.sinOut
+      bufferCos := phaseConverter.io.cosOut
+      
+      if (params.useMultiplier) {
 
-      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      
-      if (params.useMultiplier) {
+        val bufferSin2 = Wire(params.protoOut)
+        val bufferCos2 = Wire(params.protoOut)
         
-        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+        val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
         
-        val started = RegInit(Bool(), false.B)
-        when(ioout.fire()) {started := true.B}
-        
-        when(inFire){
-          when(!enableMultiplying) {
-            bufferSin := phaseConverter.io.sinOut
-            bufferCos := phaseConverter.io.cosOut
-            outputBufferSin := bufferSin
-            outputBufferCos := bufferCos
-            bufferSin2 := outputBufferSin
-            bufferCos2 := outputBufferCos
-          }.otherwise {
-            DspContext.withBinaryPointGrowth(0) {
-              bufferSin := phaseConverter.io.sinOut
-              bufferCos := phaseConverter.io.cosOut
-              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              bufferSin2 := outputBufferSin
-              bufferCos2 := outputBufferCos
-            }
-          }
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+          bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
-        when (enableMultiplying) {
-          DspContext.withBinaryPointGrowth(0) {
-            when(queueCounter === 3.U){
-              when(queueCounterWire === 2.U){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen(((inputEnableReg && inReady) && inFire)){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen((inputEnableReg && inReady) && !inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.elsewhen(!(inputEnableReg && inReady) && inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.otherwise{
-                outputBufferSin2 := bufferSin2
-                outputBufferCos2 := bufferCos2
-              }
-            }.otherwise{
-              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-            }
-          }
-        } .otherwise {
-          when(queueCounter === 3.U){
-            when(queueCounterWire === 2.U){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen(((inputEnableReg && inReady) && inFire)){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen((inputEnableReg && inReady) && !inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.elsewhen(!(inputEnableReg && inReady) && inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.otherwise{
-              outputBufferSin2 := bufferSin2
-              outputBufferCos2 := bufferCos2
-            }
-          }.otherwise{
-            outputBufferSin2 := bufferSin
-            outputBufferCos2 := bufferCos
-          }
-        }
-        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
+        
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister((inReady && inputEnableReg), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos2.asUInt(), bufferSin2.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
         
       } else {
-        when(inFire){
-          outputBufferSin := phaseConverter.io.sinOut
-          outputBufferCos := phaseConverter.io.cosOut
-          outputBufferSin2 := outputBufferSin
-          outputBufferCos2 := outputBufferCos
-        }
-        
-        when(queueCounter === 2.U){
-          when((inputEnableReg && inReady) && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.elsewhen((inputEnableReg && inReady) && !inFire){
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }.elsewhen(!(inputEnableReg && inReady) && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.otherwise{
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }
-        }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }
+      
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, pipe = false, flow = true))
+        queue.io.enq.valid := ShiftRegister((inReady && inputEnableReg), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos.asUInt(), bufferSin.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
       }
+      
+      val queueLast = Module(new Queue(Bool(), latency+1, flow = true))
+      queueLast.io.enq.valid := ShiftRegister(poff.get.in(0)._1.fire(), latency, resetData = false.B, en = true.B)
+      queueLast.io.enq.bits := ShiftRegister(poff.get.in(0)._1.bits.last, latency, resetData = false.B, en = true.B)
+      queueLast.io.deq.ready := ioout.ready
+      ioout.bits.last := queueLast.io.deq.bits
     }
     
     //-----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -628,7 +351,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
       
-      val latency = if (params.useMultiplier) 3 else 2 //2 //if (params.syncROMEnable) 2 else 1
+      //val latency = if (params.useMultiplier) 3 else 2 //2 //if (params.syncROMEnable) 2 else 1
       
       // generate regmap
       if (!params.useMultiplier) {
@@ -715,17 +438,11 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
       }
       
-      val queueCounter = RegInit(0.U(2.W))
+      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val queueCounter = RegInit(0.U(3.W))
       val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
-      queueCounter := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
-      val lastStateQueueCounter = RegInit(0.U(2.W))
-      when (queueCounter =/= RegNext(queueCounter)) {lastStateQueueCounter := RegNext(queueCounter)}
-      val lastStateQueueCounterWire = Wire(UInt(2.W))
-      lastStateQueueCounterWire := Mux(queueCounter =/= RegNext(queueCounter), RegNext(queueCounter), lastStateQueueCounter)
-      val queueCounterWire = Wire(UInt(2.W))
-      queueCounterWire := queueCounter +& (inputEnableReg && inReady) -& ioout.fire()
-
-      // phase counter
+       queueCounter := queueCounter +& (inReady && inputEnableReg) -& ioout.fire()
+      
       if ((params.phaseAccEnable) || (!(params.phaseAccEnable) && (params.pincType == Fixed))) {
         when(inputEnableReg && inReady) {
           phaseCounter := phaseCounter + freqReg
@@ -740,122 +457,41 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       // phase converter
       phaseConverter.io.phase := phaseCounter + poffReg
       
-      val inFire = RegInit(Bool(), false.B)
-      when((inputEnableReg && inReady)) {inFire := true.B}.otherwise {inFire := false.B}
+      val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
+      
+      bufferSin := phaseConverter.io.sinOut
+      bufferCos := phaseConverter.io.cosOut
       
       if (params.useMultiplier) {
-        ioout.valid := (((queueCounter === 3.U) || ((queueCounter === 1.U) && !inFire && !RegNext(inFire, false.B)) || ((queueCounter === 2.U) && !inFire)) && ioout.ready)
+
+        val bufferSin2 = Wire(params.protoOut)
+        val bufferCos2 = Wire(params.protoOut)
+        
+        val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
+        
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+          bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
+        }
+        
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, flow = true))
+        queue.io.enq.valid := ShiftRegister((inReady && inputEnableReg), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos2.asUInt(), bufferSin2.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
+        
       } else {
-        ioout.valid := (((queueCounter === 2.U) || ((queueCounter === 1.U) && (lastStateQueueCounterWire === 2.U))) && ioout.ready)
+      
+        val queue = Module(new Queue(UInt((beatBytes * 8).W), latency+1, pipe = false, flow = true))
+        queue.io.enq.valid := ShiftRegister((inReady && inputEnableReg), latency, resetData = false.B, en = true.B)
+        queue.io.enq.bits := Cat(bufferCos.asUInt(), bufferSin.asUInt())
+        ioout.valid := queue.io.deq.valid && ioout.ready
+        queue.io.deq.ready := ioout.ready
+        ioout.bits.data := queue.io.deq.bits
       }
       ioout.bits.last := false.B
-      
-      val outputBufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-
-      val outputBufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      val outputBufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-      
-      if (params.useMultiplier) {
-        
-        val bufferSin = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferSin2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        val bufferCos2 = RegInit(params.protoOut, 0.U.asTypeOf(params.protoOut))
-        
-        val started = RegInit(Bool(), false.B)
-        when(ioout.fire()) {started := true.B}
-        
-        when(inFire){
-          when(!enableMultiplying) {
-            bufferSin := phaseConverter.io.sinOut
-            bufferCos := phaseConverter.io.cosOut
-            outputBufferSin := bufferSin
-            outputBufferCos := bufferCos
-            bufferSin2 := outputBufferSin
-            bufferCos2 := outputBufferCos
-          }.otherwise {
-            DspContext.withBinaryPointGrowth(0) {
-              bufferSin := phaseConverter.io.sinOut
-              bufferCos := phaseConverter.io.cosOut
-              outputBufferSin := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              bufferSin2 := outputBufferSin
-              bufferCos2 := outputBufferCos
-            }
-          }
-        }
-        when (enableMultiplying) {
-          DspContext.withBinaryPointGrowth(0) {
-            when(queueCounter === 3.U){
-              when(queueCounterWire === 2.U){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen(((inputEnableReg && inReady) && inFire)){
-                outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-                outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              }.elsewhen((inputEnableReg && inReady) && !inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.elsewhen(!(inputEnableReg && inReady) && inFire){
-                outputBufferSin2 := outputBufferSin
-                outputBufferCos2 := outputBufferCos
-              }.otherwise{
-                outputBufferSin2 := bufferSin2
-                outputBufferCos2 := bufferCos2
-              }
-            }.otherwise{
-              outputBufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-              outputBufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* multiplyingFactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
-            }
-          }
-        } .otherwise {
-          when(queueCounter === 3.U){
-            when(queueCounterWire === 2.U){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen(((inputEnableReg && inReady) && inFire)){
-              outputBufferSin2 := bufferSin
-              outputBufferCos2 := bufferCos
-            }.elsewhen((inputEnableReg && inReady) && !inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.elsewhen(!(inputEnableReg && inReady) && inFire){
-              outputBufferSin2 := outputBufferSin
-              outputBufferCos2 := outputBufferCos
-            }.otherwise{
-              outputBufferSin2 := bufferSin2
-              outputBufferCos2 := bufferCos2
-            }
-          }.otherwise{
-            outputBufferSin2 := bufferSin
-            outputBufferCos2 := bufferCos
-          }
-        }
-        ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-        
-      } else {
-        when(inFire){
-          outputBufferSin := phaseConverter.io.sinOut
-          outputBufferCos := phaseConverter.io.cosOut
-          outputBufferSin2 := outputBufferSin
-          outputBufferCos2 := outputBufferCos
-        }
-        
-        when(queueCounter === 2.U){
-          when((inputEnableReg && inReady) && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.elsewhen((inputEnableReg && inReady) && !inFire){
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }.elsewhen(!(inputEnableReg && inReady) && inFire){
-            ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-          }.otherwise{
-            ioout.bits.data := Cat(outputBufferCos2.asUInt(), outputBufferSin2.asUInt())
-          }
-        }.otherwise{
-          ioout.bits.data := Cat(outputBufferCos.asUInt(), outputBufferSin.asUInt())
-        }
-      }
     }
   }
 }
@@ -906,7 +542,7 @@ object NCOLazyModuleApp extends App
     roundingMode = RoundHalfUp,
     pincType = Streaming,
     poffType = Fixed,
-    useMultiplier = true
+    useMultiplier = false
   )
     val beatBytes = 4
 

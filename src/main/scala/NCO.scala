@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 package nco
 
 import chisel3._
@@ -29,7 +27,8 @@ case class NCOParams[T <: Data]
   roundingMode: TrimType = RoundHalfUp,
   pincType: InterfaceType = Streaming,
   poffType: InterfaceType = Streaming,
-  useMultiplier : Boolean = false
+  useMultiplier : Boolean = false,
+  numMulPipes: Int = 1
 ) {
   requireIsChiselType(protoFreq)
   requireIsChiselType(protoOut)
@@ -50,8 +49,9 @@ case class NCOParams[T <: Data]
 }
 
 object FixedNCOParams {
-  def apply(tableSize: Int, tableWidth: Int, phaseWidth: Int = 8, rasterizedMode: Boolean = false, nInterpolationTerms: Int = 0, ditherEnable: Boolean = false, syncROMEnable: Boolean = false, phaseAccEnable: Boolean = true, roundingMode: TrimType = RoundHalfUp, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming, useMultiplier: Boolean = false): NCOParams[FixedPoint] = {
+  def apply(tableSize: Int, tableWidth: Int, phaseWidth: Int = 8, rasterizedMode: Boolean = false, nInterpolationTerms: Int = 0, ditherEnable: Boolean = false, syncROMEnable: Boolean = false, phaseAccEnable: Boolean = true, roundingMode: TrimType = RoundHalfUp, pincType: InterfaceType = Streaming, poffType: InterfaceType = Streaming, useMultiplier: Boolean = false, numMulPipes: Int = 1): NCOParams[FixedPoint] = {
     require(tableWidth >= 3)
+    require((numMulPipes <= 5) && (numMulPipes >=0))
     val phaseW = {
       if (rasterizedMode){
         (log2Ceil(tableSize)+2).toInt
@@ -74,7 +74,8 @@ object FixedNCOParams {
       roundingMode = roundingMode,
       pincType = pincType,
       poffType = poffType,
-      useMultiplier = useMultiplier
+      useMultiplier = useMultiplier,
+      numMulPipes = numMulPipes
     )
   }
 }
