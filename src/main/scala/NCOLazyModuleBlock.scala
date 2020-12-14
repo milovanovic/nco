@@ -75,7 +75,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val queueCounterPoff = RegInit(0.U(2.W))
       queueCounterPoff := queueCounterPoff +& poff.get.in(0)._1.fire() -& poff.get.in(0)._1.fire()
       
-      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val latency = {
+        if (!params.syncROMEnable) {
+          if (params.useMultiplier) (params.numMulPipes + 2) else 2
+        } else {
+          if (params.useMultiplier) (params.numMulPipes + 3) else 3
+        }
+      }
 
       val inFire = RegInit(Bool(), false.B)
       when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
@@ -173,7 +179,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       // phase converter
       phaseConverter.io.phase := phaseCounter + poffReg
       
-      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val latency = {
+        if (!params.syncROMEnable) {
+          if (params.useMultiplier) (params.numMulPipes + 2) else 2
+        } else {
+          if (params.useMultiplier) (params.numMulPipes + 3) else 3
+        }
+      }
       
       val inFire = RegInit(Bool(), false.B)
       when(freq.get.in(0)._1.fire()) {inFire := true.B}.otherwise {inFire := false.B}
@@ -272,7 +284,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         regmap(fields.zipWithIndex.map({ case (f, i) => i * beatBytes -> Seq(f)}): _*)
       }
 
-      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val latency = {
+        if (!params.syncROMEnable) {
+          if (params.useMultiplier) (params.numMulPipes + 2) else 2
+        } else {
+          if (params.useMultiplier) (params.numMulPipes + 3) else 3
+        }
+      }
       val queueCounter = RegInit(0.U(3.W))
       val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
        queueCounter := queueCounter +& (inReady && inputEnableReg) -& ioout.fire()
@@ -350,8 +368,6 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       val poffReg = RegInit(0.U((beatBytes*4).W))
       val enableMultiplying = RegInit(Bool(), false.B)
       val multiplyingFactor = RegInit(UInt((beatBytes*4).W), 0.U)
-      
-      //val latency = if (params.useMultiplier) 3 else 2 //2 //if (params.syncROMEnable) 2 else 1
       
       // generate regmap
       if (!params.useMultiplier) {
@@ -438,7 +454,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
       }
       
-      val latency = if (params.useMultiplier) (params.numMulPipes + 2) else 2
+      val latency = {
+        if (!params.syncROMEnable) {
+          if (params.useMultiplier) (params.numMulPipes + 2) else 2
+        } else {
+          if (params.useMultiplier) (params.numMulPipes + 3) else 3
+        }
+      }
       val queueCounter = RegInit(0.U(3.W))
       val inReady = (queueCounter < latency.U) || (queueCounter === latency.U && ioout.ready)
        queueCounter := queueCounter +& (inReady && inputEnableReg) -& ioout.fire()
