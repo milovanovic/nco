@@ -1,5 +1,6 @@
-package nco
+// SPDX-License-Identifier: Apache-2.0
 
+package nco
 
 import chisel3._
 import chisel3.util._
