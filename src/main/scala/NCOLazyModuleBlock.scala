@@ -129,7 +129,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         
         val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
@@ -145,11 +145,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       
         val bufferSin2 = Wire(params.protoOut)
         val bufferCos2 = Wire(params.protoOut)
+        bufferSin2 := DontCare
+        bufferCos2 := DontCare
         
         if (params.useMultiplier) {
           val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
             bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
             bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           }
@@ -191,7 +193,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         val sinQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferSin2, bufferSin) else bufferSin
         val cosQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferCos2, bufferCos) else bufferCos
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           IOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* qfactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           IOUT2 := (cosQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           QOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
@@ -199,7 +201,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
         
         when (enableQAM) {
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, trimType = params.roundingMode)) {
             IOUT := (IOUT2 context_- IOUT1).asTypeOf(params.protoOut)
             QOUT := (QOUT2 context_+ QOUT1).asTypeOf(params.protoOut)
           }
@@ -356,7 +358,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         
         val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
@@ -372,11 +374,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       
         val bufferSin2 = Wire(params.protoOut)
         val bufferCos2 = Wire(params.protoOut)
+        bufferSin2 := DontCare
+        bufferCos2 := DontCare
         
         if (params.useMultiplier) {
           val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
             bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
             bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           }
@@ -418,7 +422,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         val sinQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferSin2, bufferSin) else bufferSin
         val cosQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferCos2, bufferCos) else bufferCos
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           IOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* qfactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           IOUT2 := (cosQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           QOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
@@ -426,7 +430,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
         
         when (enableQAM) {
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, trimType = params.roundingMode)) {
             IOUT := (IOUT2 context_- IOUT1).asTypeOf(params.protoOut)
             QOUT := (QOUT2 context_+ QOUT1).asTypeOf(params.protoOut)
           }
@@ -617,7 +621,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         
         val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
@@ -633,11 +637,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       
         val bufferSin2 = Wire(params.protoOut)
         val bufferCos2 = Wire(params.protoOut)
+        bufferSin2 := DontCare
+        bufferCos2 := DontCare
         
         if (params.useMultiplier) {
           val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
             bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
             bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           }
@@ -660,7 +666,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         val sinQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferSin2, bufferSin) else bufferSin
         val cosQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferCos2, bufferCos) else bufferCos
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           IOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* qfactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           IOUT2 := (cosQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           QOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
@@ -668,7 +674,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
         
         when (enableQAM) {
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, trimType = params.roundingMode)) {
             IOUT := (IOUT2 context_- IOUT1).asTypeOf(params.protoOut)
             QOUT := (QOUT2 context_+ QOUT1).asTypeOf(params.protoOut)
           }
@@ -961,7 +967,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         
         val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
         }
@@ -977,11 +983,13 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
       
         val bufferSin2 = Wire(params.protoOut)
         val bufferCos2 = Wire(params.protoOut)
+        bufferSin2 := DontCare
+        bufferCos2 := DontCare
         
         if (params.useMultiplier) {
           val factor = Mux(enableMultiplying, multiplyingFactor, (1.U << (beatBytes*4-2)))
 
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
             bufferSin2 := (bufferSin.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
             bufferCos2 := (bufferCos.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* factor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           }
@@ -1004,7 +1012,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         val sinQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferSin2, bufferSin) else bufferSin
         val cosQAM = if (params.useMultiplier) Mux(enableMultiplying, bufferCos2, bufferCos) else bufferCos
         
-        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes)) {
+        DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, numMulPipes = params.numMulPipes, trimType = params.roundingMode)) {
           IOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* qfactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           IOUT2 := (cosQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
           QOUT1 := (sinQAM.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP)) context_* ifactor.asTypeOf(FixedPoint((params.protoOut.getWidth).W, (params.protoOut.getWidth-2).BP))).asTypeOf(params.protoOut)
@@ -1012,7 +1020,7 @@ abstract class NCOLazyModuleBlock[T <: Data : Real : BinaryRepresentation](param
         }
         
         when (enableQAM) {
-          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0)) {
+          DspContext.alter(DspContext.current.copy(binaryPointGrowth = 0, trimType = params.roundingMode)) {
             IOUT := (IOUT2 context_- IOUT1).asTypeOf(params.protoOut)
             QOUT := (QOUT2 context_+ QOUT1).asTypeOf(params.protoOut)
           }
@@ -1077,9 +1085,9 @@ object NCOLazyModuleApp extends App
     
   // here just define parameters
   val paramsNCO = FixedNCOParams(
-    tableSize = 128,
+    tableSize = 64,
     tableWidth = 16,
-    phaseWidth = 9,
+    phaseWidth = 8,
     rasterizedMode = false,
     nInterpolationTerms = 0,
     ditherEnable = false,
@@ -1088,9 +1096,9 @@ object NCOLazyModuleApp extends App
     roundingMode = RoundHalfUp,
     pincType = Streaming,
     poffType = Fixed,
-    useMultiplier = true,
+    useMultiplier = false,
     numMulPipes = 1,
-    useQAM = true
+    useQAM = false
   )
     val beatBytes = 4
 
@@ -1107,9 +1115,9 @@ object NCOLazyModuleApp extends App
     poff.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioparallelinPoff
     val inStreamPoff = InModuleBody { ioparallelinPoff.makeIO() }*/
     
-    val ioparallelinQAM = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
+    /*val ioparallelinQAM = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
     inQAM.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 4)) := ioparallelinQAM
-    val inStreamQAM = InModuleBody { ioparallelinQAM.makeIO() }
+    val inStreamQAM = InModuleBody { ioparallelinQAM.makeIO() }*/
   })
   chisel3.Driver.execute(Array("--target-dir", "verilog", "--top-name", "NCOLazyModuleApp"), ()=> ncoModule.module) // generate verilog code
 }
