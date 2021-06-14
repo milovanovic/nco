@@ -38,7 +38,7 @@ In the rasterized mode, output frequency equals *f<sub>out</sub> = (f<sub>clk</s
 *p<sub>inc</sub>* is phase increment and *M* is the value four times larger than the look-up table size. 
 In standard mode, output frequency is equal *f<sub>out</sub> = (f<sub>clk</sub> x p<sub>inc</sub>) / 2<sup>B</sup>*, where *B* is the phase width after truncation. Block diagram of a NCO generator is shown below.
 
-![Numerically controlled oscillator block diagram](./doc/images/nco.png)
+![Numerically controlled oscillator block diagram](./doc/images/nco1.svg)
 
 Previously explained generator is described with following Scala files available inside`src/main/scala` directory:
 
