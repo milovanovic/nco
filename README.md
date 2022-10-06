@@ -5,7 +5,7 @@ Numerically Controlled Oscillator (NCO) Chisel Generator
 
 ## Overview
 This repository contains a generator of a parametrizable numerically controlled oscillator with various options, written in [Chisel](http://www.chisel-lang.org) hardware design language. Numerically Controlled 
-Oscillators (NCO), or Direct Digital Synthesizers (DDS), are important components in many digital communication systems. They are used for constructing digital down and up converters, demodulators, and implementing various types of modulation schemes.
+Oscillators (NCO), or Direct Digital Synthesizers (DDS), are important components in many digital communication systems. They are used for constructing digital down and up converters, demodulators, and implementing various types of modulation schemes. The description of this generator can be found among the proceedings of [2021 24th International Symposium on Design and Diagnostics of Electronic Circuits & Systems (DDECS)](https://ieeexplore.ieee.org/document/9417063), where it is thoroughly elaborated.
 
 To make a Chisel project and include NCO generator, an open source starter template [Chipyard Framework](http://github.com/ucb-bar/chipyard) can be used.
 
@@ -23,6 +23,7 @@ The NCO generator has following features:
 	- Output data precision can vary
 	- Different input interfaces
 	- Optinal multiplier used for the output
+	- Optional output signal quadrature amplitude modulation (QAM) scheme implemented
 	- Output buffering
 
 The generated module consists of a Phase Generator and a SIN/COS Lookup Table (phase to sinusoid conversion). SIN/COS Lookup Table can also be used individually. The Phase Generator consists of a phase accumulator followed 
@@ -88,7 +89,9 @@ NCO parameters are defined inside `case class NCOParams`. User can set up these 
 	  roundingMode: TrimType = RoundHalfUp,
 	  pincType: InterfaceType = Streaming,
 	  poffType: InterfaceType = Streaming,
-	  useMultiplier: Boolean = false
+	  useMultiplier: Boolean = false,
+	  numMulPipes: Int = 1,
+	  useQAM: Boolean = false
 	)
 
 The explanation of each parameter is given below:
@@ -106,7 +109,9 @@ The explanation of each parameter is given below:
 - `roundingMode` - rounding mode used for trimming values to fixed point
 - `pincType` - type of the input interface for phase increment/absolute phase value
 - `poffType` - type of the input interface for phase offset
-- `useMultiplier` - determines if output multiplier will be used
+- `useMultiplier` - determines if the output multiplier will be implemented
+- `numMulPipes` - determines the number of pipeline registers used after multiplication operations
+- `useQAM` - determines if the QAM scheme will be implemented
 
 ## Tests
 
@@ -119,12 +124,10 @@ Besides main source code, various tests for NCO generator are provided in this r
 - `analysesTester` - contains tester used for parameter analysis of the NCO generator
 - `analysesSpec` - used for analysing performance of generated NCO modules depending on several parameters. Can be run using `testOnly nco.NCOAnalysisSpec` command
 
-Tester functions such as `peek`, `poke` and `expect`, available inside `DspTester` (check [dsptools Chisel library ](http://github.com/ucb-bar/dsptools)), are extensively used for design testing.
-
 ## NCOLazyModuleBlock
 
 NCOLazyModuleBlock is a generator of numerically controlled oscillators with the same parameters and functionalities as the NCO generator described above, with one difference: it can use AXI4 Interface for accessing 
-memory-mapped control registers. Whether this interface will be used or not depends on the parameters for input interfaces and multiplier. Following memory-mapped control registers can exist:
+memory-mapped control registers. Whether this interface will be used, depends on the parameters regarding input interfaces, multiplication operation and QAM scheme. Following memory-mapped control registers can exist:
 - `poff` - phase offset value when `poffType` parameter is set as Config
 - `freq` - phase increment/phase value when `pincType` parameter is set as Config
 - `inputEN` - input enable signal when `pincType` parameter is set as Fixed
@@ -132,5 +135,8 @@ memory-mapped control registers. Whether this interface will be used or not depe
 - `multiplyingFactor` - factor value for multiplying when `useMultiplier` parameter is set as true. This value can be smaller or equal 1 and it is of the `protoOut` data type and format. It can be assigned by sending 
 the binary representation in the appropriate format converted to integer value. For example, if FixedPoint data type with width equal to 16 and binary point equal to 14 is used, for setting the multiplying factor 
 to 0.5, value of 0x2000 should be sent (binary representation of 0.5 in appropriate format is 00.10000000000000, converted to integer value it is 0010000000000000 binary or 0x2000 hex).
+- `enableQAM` - QAM enable signal when `useQAM` parameter is set as true
+- `iinQAM` - QAM in-phase input signal when `useQAM` parameter is set as true and `pincType` parameter is not set as Streaming
+- `qinQAM` - QAM quadrature input signal when `useQAM` parameter is set as true and `pincType` parameter is not set as Streaming
 
-Also, input phase/phase increment and/or phase offset can have AXI4 Streaming Slave Interface if appropriate parameters are set as Streaming. Output signals always have AXI4 Streaming Master Interface.
+This generator adds optional AXI4 Streaming Slave Interfaces for QAM in-phase and quadrature inputs when phase/phase increment parameter is set as Streaming and QAM is used. Also, input phase/phase increment and/or phase offset can have AXI4 Streaming Slave Interface if appropriate parameters are set as Streaming. Output signals always have AXI4 Streaming Master Interface.
