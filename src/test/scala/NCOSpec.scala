@@ -6,11 +6,14 @@ import breeze.math.Complex
 import chisel3._
 import dsptools.numbers._
 import dsptools.numbers.implicits._
-import org.scalatest.{FlatSpec, Matchers}
+//import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 import scala.io.Source
 import dsptools.RoundHalfUp
 
-class NCOStreamingPINCandPOFFSpec extends FlatSpec with Matchers {
+//class NCOStreamingPINCandPOFFSpec extends FlatSpec with Matchers {
+class NCOStreamingPINCandPOFFSpec extends AnyFlatSpec with Matchers {
   def dut[T <: Data : Real : BinaryRepresentation](params: NCOParams[T]): () => NCOStreamingPINCandPOFF[T] = () => {
     NCOTableParams.tableNameList.clear()
     new NCOStreamingPINCandPOFF(params)

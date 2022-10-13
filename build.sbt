@@ -26,18 +26,28 @@ def javacOptionsVersion(scalaVersion: String): Seq[String] = {
   }
 }
 
-name := "nco-module"
-
+name := "nco"
 version := "1.0"
-
 scalaVersion := "2.12.12"
-
 crossScalaVersions := Seq("2.12.12", "2.11.12")
 
 resolvers ++= Seq(
   Resolver.sonatypeRepo("snapshots"),
   Resolver.sonatypeRepo("releases")
 )
+
+libraryDependencies ++= Seq(
+  "org.scalanlp" %% "breeze-viz" % "0.13.2",
+  "edu.berkeley.cs" %% "rocket-dsptools" % "1.2-SNAPSHOT",
+)
+
+//libraryDependencies += "org.scalactic" %% "scalactic" % "3.2.14"
+//libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.14" % "test"
+
+scalacOptions ++= scalacOptionsVersion(scalaVersion.value)
+javacOptions ++= javacOptionsVersion(scalaVersion.value)
+
+/*
 
 // Provide a managed dependency on X if -DXVersion="" is supplied on the command line.
 val defaultVersions = Map(
@@ -57,3 +67,4 @@ libraryDependencies += "edu.berkeley.cs" %% "dsptools" % "1.2.3"
 libraryDependencies += "org.scalanlp" %% "breeze-natives" % "0.13.2"
 libraryDependencies += "org.scalanlp" %% "breeze-viz" % "0.13.2"
 libraryDependencies += "edu.berkeley.cs" %% "rocket-dsptools" % "1.2-SNAPSHOT"
+*/

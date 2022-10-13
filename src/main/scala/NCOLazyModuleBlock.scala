@@ -5,6 +5,7 @@ package nco
 import chisel3._
 import chisel3.experimental._
 import chisel3.util._
+import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import dsptools._
 import dsptools.numbers._
 
@@ -15,9 +16,6 @@ import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper._
 import freechips.rocketchip.tilelink._
-import dsptools.tester.MemMasterModel
-import chisel3.iotesters.{ChiselFlatSpec, Driver, PeekPokeTester}
-import org.scalatest.{FlatSpec, Matchers}
 
 
 
@@ -1106,7 +1104,7 @@ object NCOLazyModuleApp extends App
 
   //val ncoModule = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
   //})
-  val ncoModule = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
+  val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
     val ioparallelin = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
     freq.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioparallelin
     val inStreamFreq = InModuleBody { ioparallelin.makeIO() }
@@ -1119,6 +1117,7 @@ object NCOLazyModuleApp extends App
     inQAM.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 4)) := ioparallelinQAM
     val inStreamQAM = InModuleBody { ioparallelinQAM.makeIO() }*/
   })
-  chisel3.Driver.execute(Array("--target-dir", "verilog", "--top-name", "NCOLazyModuleApp"), ()=> ncoModule.module) // generate verilog code
+  //chisel3.Driver.execute(Array("--target-dir", "verilog", "--top-name", "NCOLazyModuleApp"), ()=> ncoModule.module) // generate verilog code
+  (new ChiselStage).execute(Array("--target-dir", "verilog/AXI4NCOLazyModuleBlock"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }
 

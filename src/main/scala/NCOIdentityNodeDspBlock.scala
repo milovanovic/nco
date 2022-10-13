@@ -4,6 +4,7 @@ package nco
 
 import chisel3._
 import chisel3.util._
+import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
 import dsptools._
 import dsptools.numbers._
 
@@ -74,9 +75,9 @@ object NCOIdentityNodeDspBlock extends App
 
   val baseAddress = 0x500
   implicit val p: Parameters = Parameters.empty
-  val NCOIdentityNodeModule = LazyModule(new AXI4NCOIdentityNodeBlock(paramsNCO, AddressSet(baseAddress + 0x100, 0xFF), _beatBytes = 4) with dspblocks.AXI4StandaloneBlock {
+  val lazyDut = LazyModule(new AXI4NCOIdentityNodeBlock(paramsNCO, AddressSet(baseAddress + 0x100, 0xFF), _beatBytes = 4) with dspblocks.AXI4StandaloneBlock {
     override def standaloneParams = AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 1)
   })
 
-  chisel3.Driver.execute(args, ()=> NCOIdentityNodeModule.module) // generate verilog code
+   (new ChiselStage).execute(Array("--target-dir", "verilog/AXI4NCOIdentityNodeBlock"), Seq(ChiselGeneratorAnnotation(() => lazyDut.module)))
 }

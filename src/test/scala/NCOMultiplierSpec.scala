@@ -21,7 +21,9 @@ import freechips.rocketchip.regmapper._
 import freechips.rocketchip.tilelink._
 import chisel3.iotesters.Driver
 import chisel3.iotesters.PeekPokeTester
-import org.scalatest.{FlatSpec, Matchers}
+//import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 
 
 
@@ -129,7 +131,8 @@ class NCOMultiplierTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4Block
 }
 
 
-class NCOMultiplierSpec extends FlatSpec with Matchers {
+//class NCOMultiplierSpec extends FlatSpec with Matchers {
+class NCOMultiplierSpec extends AnyFlatSpec with Matchers {
   implicit val p: Parameters = Parameters.empty
   
   // here just define parameters

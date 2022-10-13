@@ -6,10 +6,13 @@ import breeze.math.Complex
 import chisel3._
 import dsptools.numbers._
 import dsptools.numbers.implicits._
-import org.scalatest.{FlatSpec, Matchers}
+//import org.scalatest.{FlatSpec, Matchers}
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 import scala.io.Source
 
-class NCOTableSpec extends FlatSpec with Matchers {
+//class NCOTableSpec extends FlatSpec with Matchers {
+class NCOTableSpec extends AnyFlatSpec with Matchers {
   def dut[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]): () => NCOTable[T] = () => {
     NCOTableParams.tableNameList.clear()
     new NCOTable(params)
