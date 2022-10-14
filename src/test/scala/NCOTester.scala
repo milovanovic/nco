@@ -7,7 +7,7 @@ import chisel3.util.{log2Ceil, log2Floor}
 import chisel3._
 import chisel3.experimental.FixedPoint
 import chisel3.iotesters.PeekPokeTester
-mport chisel3.iotesters.Driver
+import chisel3.iotesters.Driver
 // import dspblocks.PeekPokePackers
 import dsptools._
 //import dsptools.DspTester

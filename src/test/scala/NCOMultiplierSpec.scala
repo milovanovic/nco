@@ -27,7 +27,7 @@ import org.scalatest.matchers.should.Matchers
 
 
 
-class NCOMultiplierTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4Block,
+class NCOMultiplierTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4NCOLazyModuleStandaloneBlock,
   csrAddress: AddressSet,
   beatBytes : Int
 ) extends PeekPokeTester(dut.module) with AXI4MasterModel {
@@ -153,7 +153,7 @@ class NCOMultiplierSpec extends AnyFlatSpec with Matchers {
   val beatBytes = 4
   
   it should "Test NCO Multiplier" in {
-    val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = 4)  with AXI4Block {
+    val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = 4)  with AXI4NCOLazyModuleStandaloneBlock {
       override def standaloneParams = AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 1)
     })
     chisel3.iotesters.Driver.execute(Array("-tiwv", "-tbn", "verilator", "-tivsuv"), () => lazyDut.module) {

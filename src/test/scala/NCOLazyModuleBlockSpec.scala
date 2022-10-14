@@ -22,8 +22,30 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 
+trait AXI4NCOLazyModuleStandaloneBlock extends DspBlock[
+  AXI4MasterPortParameters,
+  AXI4SlavePortParameters,
+  AXI4EdgeParameters,
+  AXI4EdgeParameters,
+  AXI4Bundle] {
+    def standaloneParams = AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 1)
+    val ioMem = mem.map { 
+      m => {
+        val ioMemNode = BundleBridgeSource(() => AXI4Bundle(standaloneParams))
+        m := BundleBridgeToAXI4(AXI4MasterPortParameters(Seq(AXI4MasterParameters("bundleBridgeToAXI4")))) := ioMemNode
+        val ioMem = InModuleBody { ioMemNode.makeIO() }
+        ioMem
+      }
+    }
+    // generate out stream
+    val ioStreamNode = BundleBridgeSink[AXI4StreamBundle]()
+    ioStreamNode := 
+    AXI4StreamToBundleBridge(AXI4StreamSlaveParameters()) := streamNode
+    val out = InModuleBody { ioStreamNode.makeIO() }
+  }
 
-class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4Block,
+
+class NCOLazyModuleBlockTester(dut: AXI4NCOLazyModuleBlock[FixedPoint] with AXI4NCOLazyModuleStandaloneBlock,
   csrAddress: AddressSet,
   beatBytes : Int
 ) extends PeekPokeTester(dut.module) with AXI4MasterModel {
@@ -232,10 +254,10 @@ class NCOLazyModuleBlockSpec extends AnyFlatSpec with Matchers {
   val beatBytes = 4
   
   it should "Test NCO LazyModule Block" in {
-    val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = 4)  with AXI4Block {
+    val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = 4)  with AXI4NCOLazyModuleStandaloneBlock {
       override def standaloneParams = AXI4BundleParameters(addrBits = 32, dataBits = 32, idBits = 1)
     })
-    /*val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4Block {
+    /*val lazyDut = LazyModule(new AXI4NCOLazyModuleBlock(paramsNCO, AddressSet(0x000000, 0xFF), beatBytes = beatBytes) with AXI4NCOLazyModuleStandaloneBlock {
       val ioparallelin = BundleBridgeSource(() => new AXI4StreamBundle(AXI4StreamBundleParameters(n = 2)))
       poff.get := BundleBridgeToAXI4Stream(AXI4StreamMasterParameters(n = 2)) := ioparallelin
       val inStream = InModuleBody { ioparallelin.makeIO() }
