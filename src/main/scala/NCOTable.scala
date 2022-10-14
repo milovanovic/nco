@@ -16,6 +16,10 @@ import scala.math.Pi
 import chisel3.util.random.LFSR
 
 
+abstract trait HasIO extends Module {
+  val io: Bundle
+}
+
 private [nco] object NCOTableParams {
   val tableNameList = mutable.Set[String]()
 }
@@ -93,7 +97,7 @@ class NCOTableIO[T <: Data](params: NCOTableParams[T]) extends Bundle {
 }
 
 
-class NCOTableStandardMode[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module {
+class NCOTableStandardMode[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module with HasIO {
 
   val io = IO(new NCOTableIO(params))
 
@@ -319,7 +323,7 @@ class NCOTableStandardMode[T <: Data : Ring : BinaryRepresentation : Convertable
 }
 
 
-class NCOTableRasterizedMode[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module {
+class NCOTableRasterizedMode[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module with HasIO {
 
   val io = IO(new NCOTableIO(params))
 
@@ -464,7 +468,7 @@ class NCOTableRasterizedMode[T <: Data : Ring : BinaryRepresentation : Convertab
 }
 
 
-class NCOTable[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module {
+class NCOTable[T <: Data : Ring : BinaryRepresentation : ConvertableTo](params: NCOTableParams[T]) extends Module with HasIO {
 
   val io = IO(new NCOTableIO(params))
 
